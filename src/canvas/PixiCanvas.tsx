@@ -1,17 +1,28 @@
 import { useEffect, useRef, useState } from "react";
-import { Application, Assets, Container, Graphics, Sprite } from "pixi.js";
+import {
+  Application,
+  Assets,
+  Container,
+  Graphics,
+  Sprite,
+  Text,
+  TextStyle,
+} from "pixi.js";
 import "pixi.js/advanced-blend-modes";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Layer, LayerChanges } from "../types/project";
 
 const HANDLE_SIZE = 10;
+const ENDPOINT_RADIUS = 6;
 const MIN_SIZE = 20;
+const MIN_FONT = 4;
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5;
+const SELECT_COLOR = 0x4f9eff;
 
 type HandleType = "tl" | "t" | "tr" | "r" | "br" | "b" | "bl" | "l";
 
-const HANDLE_DEFS: { type: HandleType; cursor: string }[] = [
+const BOX_HANDLE_DEFS: { type: HandleType; cursor: string }[] = [
   { type: "tl", cursor: "nwse-resize" },
   { type: "t", cursor: "ns-resize" },
   { type: "tr", cursor: "nesw-resize" },
@@ -20,6 +31,13 @@ const HANDLE_DEFS: { type: HandleType; cursor: string }[] = [
   { type: "b", cursor: "ns-resize" },
   { type: "bl", cursor: "nesw-resize" },
   { type: "l", cursor: "ew-resize" },
+];
+
+const CORNER_HANDLE_DEFS: { type: HandleType; cursor: string }[] = [
+  { type: "tl", cursor: "nwse-resize" },
+  { type: "tr", cursor: "nesw-resize" },
+  { type: "bl", cursor: "nesw-resize" },
+  { type: "br", cursor: "nwse-resize" },
 ];
 
 function handlePosition(type: HandleType, width: number, height: number) {
@@ -35,12 +53,7 @@ interface Rect {
   height: number;
 }
 
-function computeResize(
-  type: HandleType,
-  dx: number,
-  dy: number,
-  start: Rect
-): Rect {
+function computeResize(type: HandleType, dx: number, dy: number, start: Rect): Rect {
   const left = type.includes("l");
   const right = type.includes("r");
   const top = type.includes("t");
@@ -74,6 +87,55 @@ function computeResize(
   return { x, y, width, height };
 }
 
+type Interaction = "box" | "text" | "endpoint" | "none";
+
+function interactionFor(layer: Layer): Interaction {
+  switch (layer.type) {
+    case "image":
+      return "box";
+    case "fill":
+      return "none";
+    case "text":
+      return "text";
+    case "shape":
+      return layer.shapeKind === "line" || layer.shapeKind === "arrow"
+        ? "endpoint"
+        : "box";
+  }
+}
+
+/** Bounding box (x/y/width/height) for box-style layers. */
+function boxRect(layer: Layer): Rect {
+  if (layer.type === "image") {
+    return { x: layer.x, y: layer.y, width: layer.width, height: layer.height };
+  }
+  if (layer.type === "text") {
+    return { x: layer.x, y: layer.y, width: 0, height: 0 };
+  }
+  if (layer.type === "shape") {
+    return {
+      x: layer.x ?? 0,
+      y: layer.y ?? 0,
+      width: layer.width ?? 0,
+      height: layer.height ?? 0,
+    };
+  }
+  return { x: 0, y: 0, width: 0, height: 0 };
+}
+
+function cacheKeyFor(layer: Layer): string {
+  switch (layer.type) {
+    case "image":
+      return `image:${layer.src}`;
+    case "fill":
+      return "fill";
+    case "text":
+      return "text";
+    case "shape":
+      return `shape:${layer.shapeKind}`;
+  }
+}
+
 interface PixiCanvasProps {
   canvasWidth: number;
   canvasHeight: number;
@@ -85,9 +147,11 @@ interface PixiCanvasProps {
 
 interface LayerEntry {
   container: Container;
-  content: Sprite | Graphics;
+  content: Sprite | Graphics | Text;
   outline: Graphics;
   handles: Map<HandleType, Graphics>;
+  endpointHandles: Graphics[];
+  hitLine?: Graphics;
   cacheKey: string;
 }
 
@@ -234,8 +298,8 @@ export function PixiCanvas({
       for (const layer of layers) {
         seen.add(layer.id);
         let entry = entries.get(layer.id);
-        const cacheKey = layer.type === "image" ? layer.src : `fill:${layer.color}`;
-        const interactive = layer.type === "image";
+        const cacheKey = cacheKeyFor(layer);
+        const interaction = interactionFor(layer);
 
         if (!entry || entry.cacheKey !== cacheKey) {
           if (entry) {
@@ -243,79 +307,168 @@ export function PixiCanvas({
             entries.delete(layer.id);
           }
 
-          let content: Sprite | Graphics;
+          let content: Sprite | Graphics | Text;
           if (layer.type === "image") {
             const texture = await Assets.load(convertFileSrc(layer.src));
             if (cancelled) return;
             const sprite = new Sprite(texture);
             sprite.anchor.set(0, 0);
             content = sprite;
+          } else if (layer.type === "text") {
+            content = new Text({ text: layer.text, style: new TextStyle({}) });
           } else {
-            const fill = new Graphics();
-            fill.rect(0, 0, canvasWidth, canvasHeight).fill(layer.color);
-            content = fill;
+            content = new Graphics();
           }
 
           const outline = new Graphics();
-
           const container = new Container();
-          container.addChild(content, outline);
+          container.addChild(content);
+          container.addChild(outline);
           stage!.addChild(container);
 
           const handles = new Map<HandleType, Graphics>();
-          if (interactive) {
+          const endpointHandles: Graphics[] = [];
+          let hitLine: Graphics | undefined;
+
+          if (interaction === "box" || interaction === "text") {
             container.eventMode = "static";
             container.cursor = "move";
-            for (const { type, cursor } of HANDLE_DEFS) {
+            attachDragHandlers(container, layer.id, onSelectRef, onLayerChangeRef, layersRef);
+            const defs = interaction === "text" ? CORNER_HANDLE_DEFS : BOX_HANDLE_DEFS;
+            for (const { type, cursor } of defs) {
               const handle = new Graphics();
               handle.eventMode = "static";
               handle.cursor = cursor;
               container.addChild(handle);
               handles.set(type, handle);
-              attachResizeHandlers(handle, type, layer.id, onLayerChangeRef, layersRef);
+              if (interaction === "text") {
+                attachTextResizeHandlers(handle, type, layer.id, onLayerChangeRef, layersRef);
+              } else {
+                attachResizeHandlers(handle, type, layer.id, onLayerChangeRef, layersRef);
+              }
             }
-            attachDragHandlers(container, layer.id, onSelectRef, onLayerChangeRef, layersRef);
+          } else if (interaction === "endpoint") {
+            hitLine = new Graphics();
+            hitLine.eventMode = "static";
+            hitLine.cursor = "move";
+            container.addChild(hitLine);
+            attachLineBodyDragHandlers(hitLine, layer.id, onSelectRef, onLayerChangeRef, layersRef);
+            for (const which of ["start", "end"] as const) {
+              const handle = new Graphics();
+              handle.eventMode = "static";
+              handle.cursor = "move";
+              container.addChild(handle);
+              endpointHandles.push(handle);
+              attachEndpointHandlers(handle, which, layer.id, onLayerChangeRef, layersRef);
+            }
           } else {
             container.eventMode = "none";
           }
 
-          entry = { container, content, outline, handles, cacheKey };
+          entry = { container, content, outline, handles, endpointHandles, hitLine, cacheKey };
           entries.set(layer.id, entry);
         }
 
-        const selected = interactive && layer.id === selectedId;
+        const selected = interaction !== "none" && layer.id === selectedId;
 
         entry.container.visible = layer.visible;
         entry.content.blendMode = layer.blendMode;
 
+        // --- content geometry / styling ---
         if (layer.type === "image") {
           entry.container.position.set(layer.x, layer.y);
           entry.container.rotation = layer.rotation;
           (entry.content as Sprite).width = layer.width;
           (entry.content as Sprite).height = layer.height;
-        } else {
+        } else if (layer.type === "fill") {
           entry.container.position.set(0, 0);
           entry.container.rotation = 0;
+          const g = entry.content as Graphics;
+          g.clear();
+          g.rect(0, 0, canvasWidth, canvasHeight).fill(layer.color);
+        } else if (layer.type === "text") {
+          const t = entry.content as Text;
+          t.style = new TextStyle({
+            fontFamily: layer.fontFamily,
+            fontSize: layer.fontSize,
+            fontWeight: String(layer.fontWeight) as TextStyle["fontWeight"],
+            fontStyle: layer.italic ? "italic" : "normal",
+            fill: layer.fill,
+            align: layer.align,
+            ...(layer.stroke
+              ? { stroke: { color: layer.stroke.color, width: layer.stroke.width } }
+              : {}),
+            ...(layer.dropShadow
+              ? {
+                  dropShadow: {
+                    color: layer.dropShadow.color,
+                    alpha: layer.dropShadow.alpha,
+                    blur: layer.dropShadow.blur,
+                    angle: layer.dropShadow.angle,
+                    distance: layer.dropShadow.distance,
+                  },
+                }
+              : {}),
+          });
+          t.text = layer.text;
+          entry.container.position.set(layer.x, layer.y);
+          entry.container.rotation = layer.rotation;
+        } else if (layer.type === "shape") {
+          const g = entry.content as Graphics;
+          g.clear();
+          if (layer.shapeKind === "rect" || layer.shapeKind === "ellipse") {
+            entry.container.position.set(layer.x ?? 0, layer.y ?? 0);
+            entry.container.rotation = layer.rotation ?? 0;
+            const w = layer.width ?? 0;
+            const h = layer.height ?? 0;
+            if (layer.shapeKind === "rect") g.rect(0, 0, w, h);
+            else g.ellipse(w / 2, h / 2, w / 2, h / 2);
+            if (layer.fill) g.fill(layer.fill);
+            if (layer.strokeWidth > 0 && layer.strokeColor)
+              g.stroke({ width: layer.strokeWidth, color: layer.strokeColor });
+          } else {
+            entry.container.position.set(0, 0);
+            entry.container.rotation = 0;
+            drawLine(g, layer, false);
+            if (entry.hitLine) drawLine(entry.hitLine, layer, true);
+          }
         }
 
+        // --- selection outline ---
         entry.outline.clear();
-        if (selected && layer.type === "image") {
-          entry.outline.rect(0, 0, layer.width, layer.height);
-          entry.outline.stroke({ width: 2, color: 0x4f9eff });
+        if (selected && (interaction === "box" || interaction === "text")) {
+          const w =
+            layer.type === "text" ? entry.content.width : boxRect(layer).width;
+          const h =
+            layer.type === "text" ? entry.content.height : boxRect(layer).height;
+          entry.outline.rect(0, 0, w, h).stroke({ width: 2, color: SELECT_COLOR });
         }
 
+        // --- box / corner handles ---
         for (const [type, handle] of entry.handles) {
-          if (layer.type !== "image") continue;
-          const { x, y } = handlePosition(type, layer.width, layer.height);
+          const w =
+            layer.type === "text" ? entry.content.width : boxRect(layer).width;
+          const h =
+            layer.type === "text" ? entry.content.height : boxRect(layer).height;
+          const { x, y } = handlePosition(type, w, h);
           handle.clear();
-          handle.rect(
-            x - HANDLE_SIZE / 2,
-            y - HANDLE_SIZE / 2,
-            HANDLE_SIZE,
-            HANDLE_SIZE
-          );
-          handle.fill(0x4f9eff);
+          handle
+            .rect(x - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
+            .fill(SELECT_COLOR);
           handle.visible = selected;
+        }
+
+        // --- endpoint handles ---
+        if (layer.type === "shape" && interaction === "endpoint") {
+          const pts = [
+            { x: layer.x1 ?? 0, y: layer.y1 ?? 0 },
+            { x: layer.x2 ?? 0, y: layer.y2 ?? 0 },
+          ];
+          entry.endpointHandles.forEach((handle, i) => {
+            handle.clear();
+            handle.circle(pts[i].x, pts[i].y, ENDPOINT_RADIUS).fill(SELECT_COLOR);
+            handle.visible = selected;
+          });
         }
       }
 
@@ -337,7 +490,7 @@ export function PixiCanvas({
     return () => {
       cancelled = true;
     };
-  }, [layers, selectedId]);
+  }, [layers, selectedId, canvasWidth, canvasHeight]);
 
   return (
     <div
@@ -350,13 +503,39 @@ export function PixiCanvas({
   );
 }
 
+function drawLine(
+  g: Graphics,
+  layer: Extract<Layer, { type: "shape" }>,
+  hit: boolean
+) {
+  const x1 = layer.x1 ?? 0;
+  const y1 = layer.y1 ?? 0;
+  const x2 = layer.x2 ?? 0;
+  const y2 = layer.y2 ?? 0;
+  const width = hit
+    ? Math.max(16, layer.strokeWidth + 12)
+    : Math.max(1, layer.strokeWidth);
+  const color = layer.strokeColor ?? "#000000";
+
+  g.moveTo(x1, y1).lineTo(x2, y2);
+
+  if (layer.shapeKind === "arrow") {
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const headLen = Math.max(12, layer.strokeWidth * 3);
+    const a1 = angle + Math.PI - 0.4;
+    const a2 = angle + Math.PI + 0.4;
+    g.moveTo(x2, y2).lineTo(x2 + headLen * Math.cos(a1), y2 + headLen * Math.sin(a1));
+    g.moveTo(x2, y2).lineTo(x2 + headLen * Math.cos(a2), y2 + headLen * Math.sin(a2));
+  }
+
+  g.stroke({ width, color, alpha: hit ? 0.001 : 1, cap: "round" });
+}
+
 function attachDragHandlers(
   container: Container,
   layerId: string,
   onSelectRef: React.MutableRefObject<(id: string | null) => void>,
-  onLayerChangeRef: React.MutableRefObject<
-    (id: string, changes: LayerChanges) => void
-  >,
+  onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
   layersRef: React.MutableRefObject<Layer[]>
 ) {
   let dragging = false;
@@ -370,20 +549,15 @@ function attachDragHandlers(
     dragging = true;
     startPointer = { x: e.global.x, y: e.global.y };
     const layer = layersRef.current.find((l) => l.id === layerId);
-    startPos = {
-      x: layer?.type === "image" ? layer.x : 0,
-      y: layer?.type === "image" ? layer.y : 0,
-    };
+    const r = layer ? boxRect(layer) : { x: 0, y: 0 };
+    startPos = { x: r.x, y: r.y };
   });
 
   const move = (e: { global: { x: number; y: number } }) => {
     if (!dragging) return;
     const dx = e.global.x - startPointer.x;
     const dy = e.global.y - startPointer.y;
-    onLayerChangeRef.current(layerId, {
-      x: startPos.x + dx,
-      y: startPos.y + dy,
-    });
+    onLayerChangeRef.current(layerId, { x: startPos.x + dx, y: startPos.y + dy });
   };
 
   container.on("globalpointermove", move);
@@ -395,9 +569,7 @@ function attachResizeHandlers(
   handle: Graphics,
   handleType: HandleType,
   layerId: string,
-  onLayerChangeRef: React.MutableRefObject<
-    (id: string, changes: LayerChanges) => void
-  >,
+  onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
   layersRef: React.MutableRefObject<Layer[]>
 ) {
   let resizing = false;
@@ -410,10 +582,7 @@ function attachResizeHandlers(
     resizing = true;
     startPointer = { x: e.global.x, y: e.global.y };
     const layer = layersRef.current.find((l) => l.id === layerId);
-    start =
-      layer?.type === "image"
-        ? { x: layer.x, y: layer.y, width: layer.width, height: layer.height }
-        : { x: 0, y: 0, width: 0, height: 0 };
+    start = layer ? boxRect(layer) : { x: 0, y: 0, width: 0, height: 0 };
   });
 
   const move = (e: { global: { x: number; y: number } }) => {
@@ -426,4 +595,124 @@ function attachResizeHandlers(
   handle.on("globalpointermove", move);
   handle.on("pointerup", () => (resizing = false));
   handle.on("pointerupoutside", () => (resizing = false));
+}
+
+function attachTextResizeHandlers(
+  handle: Graphics,
+  handleType: HandleType,
+  layerId: string,
+  onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
+  layersRef: React.MutableRefObject<Layer[]>
+) {
+  let resizing = false;
+  let startPointer = { x: 0, y: 0 };
+  let startFont = 0;
+  const bottom = handleType.includes("b");
+
+  handle.on("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    resizing = true;
+    startPointer = { x: e.global.x, y: e.global.y };
+    const layer = layersRef.current.find((l) => l.id === layerId);
+    startFont = layer?.type === "text" ? layer.fontSize : 0;
+  });
+
+  const move = (e: { global: { x: number; y: number } }) => {
+    if (!resizing) return;
+    const dy = e.global.y - startPointer.y;
+    const delta = bottom ? dy : -dy;
+    const fontSize = Math.max(MIN_FONT, startFont + delta);
+    onLayerChangeRef.current(layerId, { fontSize });
+  };
+
+  handle.on("globalpointermove", move);
+  handle.on("pointerup", () => (resizing = false));
+  handle.on("pointerupoutside", () => (resizing = false));
+}
+
+function attachLineBodyDragHandlers(
+  target: Graphics,
+  layerId: string,
+  onSelectRef: React.MutableRefObject<(id: string | null) => void>,
+  onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
+  layersRef: React.MutableRefObject<Layer[]>
+) {
+  let dragging = false;
+  let startPointer = { x: 0, y: 0 };
+  let s = { x1: 0, y1: 0, x2: 0, y2: 0 };
+
+  target.on("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    onSelectRef.current(layerId);
+    dragging = true;
+    startPointer = { x: e.global.x, y: e.global.y };
+    const layer = layersRef.current.find((l) => l.id === layerId);
+    if (layer?.type === "shape") {
+      s = {
+        x1: layer.x1 ?? 0,
+        y1: layer.y1 ?? 0,
+        x2: layer.x2 ?? 0,
+        y2: layer.y2 ?? 0,
+      };
+    }
+  });
+
+  const move = (e: { global: { x: number; y: number } }) => {
+    if (!dragging) return;
+    const dx = e.global.x - startPointer.x;
+    const dy = e.global.y - startPointer.y;
+    onLayerChangeRef.current(layerId, {
+      x1: s.x1 + dx,
+      y1: s.y1 + dy,
+      x2: s.x2 + dx,
+      y2: s.y2 + dy,
+    });
+  };
+
+  target.on("globalpointermove", move);
+  target.on("pointerup", () => (dragging = false));
+  target.on("pointerupoutside", () => (dragging = false));
+}
+
+function attachEndpointHandlers(
+  handle: Graphics,
+  which: "start" | "end",
+  layerId: string,
+  onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
+  layersRef: React.MutableRefObject<Layer[]>
+) {
+  let active = false;
+  let startPointer = { x: 0, y: 0 };
+  let start = { x: 0, y: 0 };
+
+  handle.on("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    active = true;
+    startPointer = { x: e.global.x, y: e.global.y };
+    const layer = layersRef.current.find((l) => l.id === layerId);
+    if (layer?.type === "shape") {
+      start =
+        which === "start"
+          ? { x: layer.x1 ?? 0, y: layer.y1 ?? 0 }
+          : { x: layer.x2 ?? 0, y: layer.y2 ?? 0 };
+    }
+  });
+
+  const move = (e: { global: { x: number; y: number } }) => {
+    if (!active) return;
+    const dx = e.global.x - startPointer.x;
+    const dy = e.global.y - startPointer.y;
+    const changes: LayerChanges =
+      which === "start"
+        ? { x1: start.x + dx, y1: start.y + dy }
+        : { x2: start.x + dx, y2: start.y + dy };
+    onLayerChangeRef.current(layerId, changes);
+  };
+
+  handle.on("globalpointermove", move);
+  handle.on("pointerup", () => (active = false));
+  handle.on("pointerupoutside", () => (active = false));
 }

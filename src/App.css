@@ -65,6 +65,14 @@ body,
   overflow-y: auto;
 }
 
+.properties-panel {
+  width: 260px;
+  flex-shrink: 0;
+  background-color: #252525;
+  border-left: 1px solid #3a3a3a;
+  overflow-y: auto;
+}
+
 .canvas-area {
   flex: 1;
   display: flex;

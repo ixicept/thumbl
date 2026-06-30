@@ -4,15 +4,23 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PixiCanvas } from "./canvas/PixiCanvas";
 import { LayersPanel } from "./panels/LayersPanel";
+import { PropertiesPanel } from "./panels/PropertiesPanel";
 import { MenuBar } from "./menu/MenuBar";
 import { NewCanvasDialog } from "./dialogs/NewCanvasDialog";
+import { loadFonts, type FontFamily } from "./fonts";
 import {
   openProject,
   pickImagePath,
   saveProject,
   saveProjectAs,
 } from "./project/io";
-import type { BlendMode, Layer, LayerChanges, Project } from "./types/project";
+import type {
+  BlendMode,
+  Layer,
+  LayerChanges,
+  Project,
+  ShapeKind,
+} from "./types/project";
 import "./App.css";
 
 function basename(path: string): string {
@@ -25,6 +33,13 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [showNewCanvasDialog, setShowNewCanvasDialog] = useState(false);
+  const [fonts, setFonts] = useState<FontFamily[]>([]);
+
+  useEffect(() => {
+    void loadFonts().then(setFonts);
+  }, []);
+
+  const selectedLayer = project?.layers.find((l) => l.id === selectedId) ?? null;
 
   function updateLayer(id: string, changes: LayerChanges) {
     setProject((p) =>
@@ -121,6 +136,72 @@ function App() {
     setSelectedId(id);
   }
 
+  function addLayer(layer: Layer) {
+    setProject((p) => (p ? { ...p, layers: [...p.layers, layer] } : p));
+    setSelectedId(layer.id);
+  }
+
+  function addTextLayer() {
+    if (!project) return;
+    addLayer({
+      id: crypto.randomUUID(),
+      type: "text",
+      name: "Text",
+      visible: true,
+      blendMode: "normal",
+      text: "Your text",
+      x: project.canvasWidth / 2 - 100,
+      y: project.canvasHeight / 2 - 30,
+      rotation: 0,
+      fontFamily: fonts.some((f) => f.family === "Impact")
+        ? "Impact"
+        : fonts[0]?.family ?? "Arial",
+      fontSize: 72,
+      fill: "#ffffff",
+      fontWeight: 400,
+      italic: false,
+      align: "left",
+      stroke: { color: "#000000", width: 6 },
+    });
+  }
+
+  function addShapeLayer(shapeKind: ShapeKind) {
+    if (!project) return;
+    const cx = project.canvasWidth / 2;
+    const cy = project.canvasHeight / 2;
+    const base = {
+      id: crypto.randomUUID(),
+      type: "shape" as const,
+      name: shapeKind.charAt(0).toUpperCase() + shapeKind.slice(1),
+      visible: true,
+      blendMode: "normal" as const,
+      strokeWidth: 4,
+    };
+    if (shapeKind === "line" || shapeKind === "arrow") {
+      addLayer({
+        ...base,
+        shapeKind,
+        x1: cx - 150,
+        y1: cy,
+        x2: cx + 150,
+        y2: cy,
+        strokeColor: "#000000",
+      });
+    } else {
+      addLayer({
+        ...base,
+        shapeKind,
+        x: cx - 150,
+        y: cy - 100,
+        width: 300,
+        height: 200,
+        rotation: 0,
+        fill: "#4f9eff",
+        strokeColor: "#000000",
+      });
+    }
+  }
+
   async function handleSave() {
     if (!project) return;
     if (filePath) {
@@ -170,6 +251,9 @@ function App() {
       } else if (e.key === "s") {
         e.preventDefault();
         void handleSave();
+      } else if (e.key === "t") {
+        e.preventDefault();
+        addTextLayer();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -228,6 +312,16 @@ function App() {
               },
             ],
           },
+          {
+            label: "Insert",
+            items: [
+              { label: "Text", shortcut: "Ctrl+T", onClick: addTextLayer, disabled: !project },
+              { label: "Rectangle", onClick: () => addShapeLayer("rect"), disabled: !project },
+              { label: "Ellipse", onClick: () => addShapeLayer("ellipse"), disabled: !project },
+              { label: "Line", onClick: () => addShapeLayer("line"), disabled: !project },
+              { label: "Arrow", onClick: () => addShapeLayer("arrow"), disabled: !project },
+            ],
+          },
         ]}
       />
       {project ? (
@@ -242,6 +336,7 @@ function App() {
               onDelete={deleteLayer}
               onBlendModeChange={changeLayerBlendMode}
               onColorChange={changeLayerColor}
+              onRename={(id, name) => updateLayer(id, { name })}
             />
           </aside>
           <div className="canvas-area">
@@ -254,6 +349,15 @@ function App() {
               onLayerChange={updateLayer}
             />
           </div>
+          {selectedLayer && (
+            <aside className="properties-panel">
+              <PropertiesPanel
+                layer={selectedLayer}
+                fonts={fonts}
+                onChange={updateLayer}
+              />
+            </aside>
+          )}
         </div>
       ) : (
         <div className="empty-state">

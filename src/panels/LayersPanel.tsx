@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   DndContext,
   PointerSensor,
@@ -13,8 +14,15 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { BlendMode, Layer } from "../types/project";
+import type { BlendMode, Layer, ShapeKind } from "../types/project";
 import "./LayersPanel.css";
+
+const SHAPE_GLYPH: Record<ShapeKind, string> = {
+  rect: "▭",
+  ellipse: "◯",
+  line: "╱",
+  arrow: "↗",
+};
 
 const BLEND_MODES: BlendMode[] = [
   "normal",
@@ -41,6 +49,7 @@ interface LayersPanelProps {
   onDelete: (id: string) => void;
   onBlendModeChange: (id: string, blendMode: BlendMode) => void;
   onColorChange: (id: string, color: string) => void;
+  onRename: (id: string, name: string) => void;
 }
 
 export function LayersPanel({
@@ -52,6 +61,7 @@ export function LayersPanel({
   onDelete,
   onBlendModeChange,
   onColorChange,
+  onRename,
 }: LayersPanelProps) {
   const sensors = useSensors(useSensor(PointerSensor));
   const displayLayers = [...layers].reverse();
@@ -95,6 +105,7 @@ export function LayersPanel({
                 onDelete={onDelete}
                 onBlendModeChange={onBlendModeChange}
                 onColorChange={onColorChange}
+                onRename={onRename}
               />
             ))}
           </ul>
@@ -112,6 +123,7 @@ interface LayerRowProps {
   onDelete: (id: string) => void;
   onBlendModeChange: (id: string, blendMode: BlendMode) => void;
   onColorChange: (id: string, color: string) => void;
+  onRename: (id: string, name: string) => void;
 }
 
 function LayerRow({
@@ -122,14 +134,28 @@ function LayerRow({
   onDelete,
   onBlendModeChange,
   onColorChange,
+  onRename,
 }: LayerRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id: layer.id });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(layer.name);
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
   };
+
+  function startEditing() {
+    setDraft(layer.name);
+    setEditing(true);
+  }
+
+  function commit() {
+    const next = draft.trim();
+    if (next && next !== layer.name) onRename(layer.id, next);
+    setEditing(false);
+  }
 
   return (
     <li
@@ -155,13 +181,14 @@ function LayerRow({
       >
         {layer.visible ? "👁" : "🚫"}
       </button>
-      {layer.type === "image" ? (
+      {layer.type === "image" && (
         <img
           className="layer-thumbnail"
           src={convertFileSrc(layer.src)}
           alt=""
         />
-      ) : (
+      )}
+      {layer.type === "fill" && (
         <input
           type="color"
           className="layer-color-swatch"
@@ -170,7 +197,34 @@ function LayerRow({
           onChange={(e) => onColorChange(layer.id, e.target.value)}
         />
       )}
-      <span className="layer-name">{layer.name}</span>
+      {layer.type === "text" && <span className="layer-icon">T</span>}
+      {layer.type === "shape" && (
+        <span className="layer-icon">{SHAPE_GLYPH[layer.shapeKind]}</span>
+      )}
+      {editing ? (
+        <input
+          className="layer-name-edit"
+          value={draft}
+          autoFocus
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            else if (e.key === "Escape") setEditing(false);
+          }}
+        />
+      ) : (
+        <span
+          className="layer-name"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            startEditing();
+          }}
+        >
+          {layer.name}
+        </span>
+      )}
       <select
         className="layer-blend-mode"
         value={layer.blendMode}

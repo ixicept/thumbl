@@ -13,6 +13,34 @@
   box-sizing: border-box;
 }
 
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #3a3a3a;
+  border-radius: 6px;
+  border: 2px solid #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #4a4a4a;
+}
+
+::-webkit-scrollbar-corner {
+  background: #1a1a1a;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a3a #1a1a1a;
+}
+
 html,
 body,
 #root {
@@ -66,20 +94,31 @@ body,
 }
 
 .properties-panel {
-  width: 260px;
+  width: 300px;
   flex-shrink: 0;
   background-color: #252525;
   border-left: 1px solid #3a3a3a;
   overflow-y: auto;
 }
 
+.properties-panel-empty {
+  font-size: 0.85em;
+  color: #777;
+  padding: 0.75em;
+}
+
 .canvas-area {
   flex: 1;
+  overflow: hidden;
+  background-color: #1e1e1e;
+}
+
+.pixi-canvas-viewport {
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
-  background-color: #1e1e1e;
 }
 
 .pixi-canvas-host {

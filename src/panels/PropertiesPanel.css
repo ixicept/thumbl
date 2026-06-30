@@ -1,24 +1,17 @@
 .properties-panel-content {
   display: flex;
   flex-direction: column;
-  gap: 0.6em;
+  gap: 0.4em;
   height: 100%;
   padding: 0.75em;
   overflow-y: auto;
-}
-
-.properties-panel-content h2 {
-  font-size: 0.9em;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #9a9a9a;
-  margin: 0 0 0.25em 0;
 }
 
 .prop-tabs {
   display: flex;
   gap: 0.15em;
   border-bottom: 1px solid #3a3a3a;
+  margin-bottom: 0.2em;
 }
 
 .prop-tab {
@@ -43,7 +36,42 @@
 .prop-tab-body {
   display: flex;
   flex-direction: column;
-  gap: 0.6em;
+  gap: 0.3em;
+}
+
+.prop-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.prop-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  background: none;
+  border: none;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: #ddd;
+  padding: 0.3em 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.prop-chevron {
+  color: #888;
+  display: inline-block;
+  transition: transform 0.12s ease-out;
+}
+
+.prop-chevron-collapsed {
+  transform: rotate(-90deg);
+}
+
+.prop-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
 }
 
 .prop-note {
@@ -51,59 +79,133 @@
   color: #888;
 }
 
-.prop-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25em;
-  flex: 1;
-  min-width: 0;
+.prop-textarea {
+  width: 100%;
+  min-height: 80px;
+  background-color: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #f0f0f0;
+  padding: 0.5em;
+  font-size: 0.85em;
+  font-family: inherit;
+  resize: vertical;
+  margin-bottom: 0.3em;
 }
 
-.prop-label {
+/* --- row layout: label left, control right, diamond reset far right --- */
+
+.prop-row-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  min-height: 26px;
+}
+
+.prop-row-label {
+  width: 64px;
+  flex-shrink: 0;
+  text-align: right;
   font-size: 0.75em;
   color: #9a9a9a;
 }
 
-.prop-row {
+.prop-row-control {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  gap: 0.6em;
+  align-items: center;
+  gap: 0.4em;
 }
 
-.prop-field input,
-.prop-field select,
-.prop-field textarea {
+.prop-row-control select,
+.prop-row-control input[type="text"],
+.prop-row-control input[type="number"]:not(.prop-slider-number) {
   width: 100%;
   background-color: #1f1f1f;
   border: 1px solid #444;
   border-radius: 4px;
   color: #f0f0f0;
-  padding: 0.35em 0.45em;
-  font-size: 0.85em;
+  padding: 0.3em 0.4em;
+  font-size: 0.82em;
   font-family: inherit;
 }
 
-.prop-field input[type="color"] {
+.prop-row-control input[type="color"] {
+  width: 28px;
+  height: 24px;
+  flex-shrink: 0;
   padding: 0;
-  height: 28px;
+  border: 1px solid #444;
+  border-radius: 4px;
   cursor: pointer;
+  background: none;
 }
 
-.prop-field textarea {
-  resize: vertical;
-}
-
-.prop-check {
-  display: flex;
-  align-items: center;
-  gap: 0.4em;
-  font-size: 0.8em;
-  color: #ddd;
+.prop-row-control input[type="checkbox"] {
+  accent-color: #4f9eff;
   cursor: pointer;
 }
 
 .prop-static {
-  font-size: 0.85em;
+  font-size: 0.82em;
   color: #ddd;
   text-transform: capitalize;
-  padding: 0.35em 0;
+}
+
+.prop-eyedropper {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ccc;
+  cursor: pointer;
+}
+
+.prop-eyedropper:hover {
+  border-color: #4f9eff;
+  color: #4f9eff;
+}
+
+/* --- slider --- */
+
+.prop-slider {
+  flex: 1;
+  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  background: #444;
+  border-radius: 2px;
+  outline: none;
+}
+
+.prop-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ccc;
+  cursor: pointer;
+}
+
+.prop-slider::-webkit-slider-thumb:hover {
+  background: #4f9eff;
+}
+
+.prop-slider-number {
+  width: 54px;
+  flex-shrink: 0;
+  background-color: #1f1f1f;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #f0f0f0;
+  padding: 0.3em 0.35em;
+  font-size: 0.8em;
 }

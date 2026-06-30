@@ -29,7 +29,7 @@ export function MenuBar({ title, menus }: MenuBarProps) {
 
   return (
     <div className="menu-bar" ref={rootRef}>
-      <span className="menu-bar-title">{title}</span>
+      {title && <span className="menu-bar-title">{title}</span>}
       {menus.map((menu) => (
         <div key={menu.label} className="menu-root">
           <button

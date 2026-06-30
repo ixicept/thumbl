@@ -164,6 +164,7 @@ export function PixiCanvas({
   onLayerChange,
 }: PixiCanvasProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const appRef = useRef<Application | null>(null);
   const stageRef = useRef<Container | null>(null);
   const entriesRef = useRef<Map<string, LayerEntry>>(new Map());
@@ -172,20 +173,21 @@ export function PixiCanvas({
   const onSelectRef = useRef(onSelect);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
 
   layersRef.current = layers;
   onLayerChangeRef.current = onLayerChange;
   onSelectRef.current = onSelect;
 
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
 
     function handleWheel(e: WheelEvent) {
       e.preventDefault();
       if (e.ctrlKey) {
         setZoom((z) => {
-          const next = z * (e.deltaY < 0 ? 1.1 : 1 / 1.1);
+          const next = z * (e.deltaY < 0 ? 1.06 : 1 / 1.06);
           return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
         });
       } else if (e.shiftKey) {
@@ -196,13 +198,13 @@ export function PixiCanvas({
       }
     }
 
-    host.addEventListener("wheel", handleWheel, { passive: false });
-    return () => host.removeEventListener("wheel", handleWheel);
+    viewport.addEventListener("wheel", handleWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", handleWheel);
   }, []);
 
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
 
     function handlePointerDown(e: PointerEvent) {
       if (e.button !== 1) return;
@@ -222,16 +224,18 @@ export function PixiCanvas({
       function handlePointerUp() {
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", handlePointerUp);
-        host!.style.cursor = "";
+        viewport!.style.cursor = "";
+        setIsPanning(false);
       }
 
-      host!.style.cursor = "grabbing";
+      viewport!.style.cursor = "grabbing";
+      setIsPanning(true);
       window.addEventListener("pointermove", handlePointerMove);
       window.addEventListener("pointerup", handlePointerUp);
     }
 
-    host.addEventListener("pointerdown", handlePointerDown);
-    return () => host.removeEventListener("pointerdown", handlePointerDown);
+    viewport.addEventListener("pointerdown", handlePointerDown);
+    return () => viewport.removeEventListener("pointerdown", handlePointerDown);
   }, []);
 
   useEffect(() => {
@@ -493,13 +497,16 @@ export function PixiCanvas({
   }, [layers, selectedId, canvasWidth, canvasHeight]);
 
   return (
-    <div
-      ref={hostRef}
-      className="pixi-canvas-host"
-      style={{
-        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-      }}
-    />
+    <div ref={viewportRef} className="pixi-canvas-viewport">
+      <div
+        ref={hostRef}
+        className="pixi-canvas-host"
+        style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transition: isPanning ? "none" : "transform 0.1s ease-out",
+        }}
+      />
+    </div>
   );
 }
 

@@ -261,7 +261,7 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, filePath]);
 
-  const title = `thumbl${filePath ? ` — ${basename(filePath)}` : ""}`;
+  const title = filePath ? basename(filePath) : "";
 
   return (
     <main className="app">
@@ -349,15 +349,19 @@ function App() {
               onLayerChange={updateLayer}
             />
           </div>
-          {selectedLayer && (
-            <aside className="properties-panel">
+          <aside className="properties-panel">
+            {selectedLayer ? (
               <PropertiesPanel
                 layer={selectedLayer}
                 fonts={fonts}
+                canvasWidth={project.canvasWidth}
+                canvasHeight={project.canvasHeight}
                 onChange={updateLayer}
               />
-            </aside>
-          )}
+            ) : (
+              <p className="properties-panel-empty">No layer selected</p>
+            )}
+          </aside>
         </div>
       ) : (
         <div className="empty-state">

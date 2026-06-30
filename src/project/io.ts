@@ -1,6 +1,6 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import type { Project } from "../types/project";
+import { normalizeProject, type Project } from "../types/project";
 
 export async function pickImagePath(): Promise<string | null> {
   const path = await open({
@@ -12,22 +12,26 @@ export async function pickImagePath(): Promise<string | null> {
   return typeof path === "string" ? path : null;
 }
 
+export async function saveProject(project: Project, path: string): Promise<void> {
+  await writeTextFile(path, JSON.stringify(project, null, 2));
+}
+
 export async function saveProjectAs(project: Project): Promise<string | null> {
   const path = await save({
     filters: [{ name: "Thumbl Project", extensions: ["thumbl.json"] }],
     defaultPath: "project.thumbl.json",
   });
   if (!path) return null;
-  await writeTextFile(path, JSON.stringify(project, null, 2));
+  await saveProject(project, path);
   return path;
 }
 
-export async function openProject(): Promise<Project | null> {
+export async function openProject(): Promise<{ project: Project; path: string } | null> {
   const path = await open({
     multiple: false,
     filters: [{ name: "Thumbl Project", extensions: ["json"] }],
   });
   if (typeof path !== "string") return null;
   const text = await readTextFile(path);
-  return JSON.parse(text) as Project;
+  return { project: normalizeProject(JSON.parse(text) as Project), path };
 }

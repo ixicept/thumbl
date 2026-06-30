@@ -1,10 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Application, Assets, Container, Graphics, Sprite } from "pixi.js";
+import "pixi.js/advanced-blend-modes";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Layer } from "../types/project";
+import type { Layer, LayerChanges } from "../types/project";
 
 const HANDLE_SIZE = 10;
 const MIN_SIZE = 20;
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 5;
 
 type HandleType = "tl" | "t" | "tr" | "r" | "br" | "b" | "bl" | "l";
 
@@ -77,15 +80,15 @@ interface PixiCanvasProps {
   layers: Layer[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  onLayerChange: (id: string, changes: Partial<Layer>) => void;
+  onLayerChange: (id: string, changes: LayerChanges) => void;
 }
 
 interface LayerEntry {
   container: Container;
-  sprite: Sprite;
+  content: Sprite | Graphics;
   outline: Graphics;
   handles: Map<HandleType, Graphics>;
-  src: string;
+  cacheKey: string;
 }
 
 export function PixiCanvas({
@@ -103,10 +106,69 @@ export function PixiCanvas({
   const layersRef = useRef<Layer[]>(layers);
   const onLayerChangeRef = useRef(onLayerChange);
   const onSelectRef = useRef(onSelect);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
 
   layersRef.current = layers;
   onLayerChangeRef.current = onLayerChange;
   onSelectRef.current = onSelect;
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    function handleWheel(e: WheelEvent) {
+      e.preventDefault();
+      if (e.ctrlKey) {
+        setZoom((z) => {
+          const next = z * (e.deltaY < 0 ? 1.1 : 1 / 1.1);
+          return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+        });
+      } else if (e.shiftKey) {
+        const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+        setPan((p) => ({ x: p.x - delta, y: p.y }));
+      } else {
+        setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
+      }
+    }
+
+    host.addEventListener("wheel", handleWheel, { passive: false });
+    return () => host.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    function handlePointerDown(e: PointerEvent) {
+      if (e.button !== 1) return;
+      e.preventDefault();
+
+      let lastX = e.clientX;
+      let lastY = e.clientY;
+
+      function handlePointerMove(ev: PointerEvent) {
+        const dx = ev.clientX - lastX;
+        const dy = ev.clientY - lastY;
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+        setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+      }
+
+      function handlePointerUp() {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        host!.style.cursor = "";
+      }
+
+      host!.style.cursor = "grabbing";
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp);
+    }
+
+    host.addEventListener("pointerdown", handlePointerDown);
+    return () => host.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -132,7 +194,10 @@ export function PixiCanvas({
         const stage = new Container();
         stage.eventMode = "static";
         stage.hitArea = app.screen;
-        stage.on("pointerdown", () => onSelectRef.current(null));
+        stage.on("pointerdown", (e) => {
+          if (e.button !== 0) return;
+          onSelectRef.current(null);
+        });
         app.stage.addChild(stage);
         stageRef.current = stage;
       });
@@ -169,56 +234,78 @@ export function PixiCanvas({
       for (const layer of layers) {
         seen.add(layer.id);
         let entry = entries.get(layer.id);
+        const cacheKey = layer.type === "image" ? layer.src : `fill:${layer.color}`;
+        const interactive = layer.type === "image";
 
-        if (!entry || entry.src !== layer.src) {
+        if (!entry || entry.cacheKey !== cacheKey) {
           if (entry) {
             entry.container.destroy({ children: true });
             entries.delete(layer.id);
           }
-          const texture = await Assets.load(convertFileSrc(layer.src));
-          if (cancelled) return;
 
-          const sprite = new Sprite(texture);
-          sprite.anchor.set(0, 0);
+          let content: Sprite | Graphics;
+          if (layer.type === "image") {
+            const texture = await Assets.load(convertFileSrc(layer.src));
+            if (cancelled) return;
+            const sprite = new Sprite(texture);
+            sprite.anchor.set(0, 0);
+            content = sprite;
+          } else {
+            const fill = new Graphics();
+            fill.rect(0, 0, canvasWidth, canvasHeight).fill(layer.color);
+            content = fill;
+          }
 
           const outline = new Graphics();
 
           const container = new Container();
-          container.addChild(sprite, outline);
-          container.eventMode = "static";
-          container.cursor = "move";
+          container.addChild(content, outline);
           stage!.addChild(container);
 
           const handles = new Map<HandleType, Graphics>();
-          for (const { type, cursor } of HANDLE_DEFS) {
-            const handle = new Graphics();
-            handle.eventMode = "static";
-            handle.cursor = cursor;
-            container.addChild(handle);
-            handles.set(type, handle);
-            attachResizeHandlers(handle, type, layer.id, onLayerChangeRef, layersRef);
+          if (interactive) {
+            container.eventMode = "static";
+            container.cursor = "move";
+            for (const { type, cursor } of HANDLE_DEFS) {
+              const handle = new Graphics();
+              handle.eventMode = "static";
+              handle.cursor = cursor;
+              container.addChild(handle);
+              handles.set(type, handle);
+              attachResizeHandlers(handle, type, layer.id, onLayerChangeRef, layersRef);
+            }
+            attachDragHandlers(container, layer.id, onSelectRef, onLayerChangeRef, layersRef);
+          } else {
+            container.eventMode = "none";
           }
 
-          entry = { container, sprite, outline, handles, src: layer.src };
+          entry = { container, content, outline, handles, cacheKey };
           entries.set(layer.id, entry);
-
-          attachDragHandlers(container, layer.id, onSelectRef, onLayerChangeRef, layersRef);
         }
 
-        const selected = layer.id === selectedId;
+        const selected = interactive && layer.id === selectedId;
 
-        entry.container.position.set(layer.x, layer.y);
-        entry.sprite.width = layer.width;
-        entry.sprite.height = layer.height;
-        entry.container.rotation = layer.rotation;
+        entry.container.visible = layer.visible;
+        entry.content.blendMode = layer.blendMode;
+
+        if (layer.type === "image") {
+          entry.container.position.set(layer.x, layer.y);
+          entry.container.rotation = layer.rotation;
+          (entry.content as Sprite).width = layer.width;
+          (entry.content as Sprite).height = layer.height;
+        } else {
+          entry.container.position.set(0, 0);
+          entry.container.rotation = 0;
+        }
 
         entry.outline.clear();
-        if (selected) {
+        if (selected && layer.type === "image") {
           entry.outline.rect(0, 0, layer.width, layer.height);
           entry.outline.stroke({ width: 2, color: 0x4f9eff });
         }
 
         for (const [type, handle] of entry.handles) {
+          if (layer.type !== "image") continue;
           const { x, y } = handlePosition(type, layer.width, layer.height);
           handle.clear();
           handle.rect(
@@ -238,6 +325,11 @@ export function PixiCanvas({
           entries.delete(id);
         }
       }
+
+      layers.forEach((layer, index) => {
+        const entry = entries.get(layer.id);
+        if (entry) stage!.setChildIndex(entry.container, index);
+      });
     }
 
     void sync();
@@ -247,7 +339,15 @@ export function PixiCanvas({
     };
   }, [layers, selectedId]);
 
-  return <div ref={hostRef} className="pixi-canvas-host" />;
+  return (
+    <div
+      ref={hostRef}
+      className="pixi-canvas-host"
+      style={{
+        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+      }}
+    />
+  );
 }
 
 function attachDragHandlers(
@@ -255,7 +355,7 @@ function attachDragHandlers(
   layerId: string,
   onSelectRef: React.MutableRefObject<(id: string | null) => void>,
   onLayerChangeRef: React.MutableRefObject<
-    (id: string, changes: Partial<Layer>) => void
+    (id: string, changes: LayerChanges) => void
   >,
   layersRef: React.MutableRefObject<Layer[]>
 ) {
@@ -264,12 +364,16 @@ function attachDragHandlers(
   let startPos = { x: 0, y: 0 };
 
   container.on("pointerdown", (e) => {
+    if (e.button !== 0) return;
     e.stopPropagation();
     onSelectRef.current(layerId);
     dragging = true;
     startPointer = { x: e.global.x, y: e.global.y };
     const layer = layersRef.current.find((l) => l.id === layerId);
-    startPos = { x: layer?.x ?? 0, y: layer?.y ?? 0 };
+    startPos = {
+      x: layer?.type === "image" ? layer.x : 0,
+      y: layer?.type === "image" ? layer.y : 0,
+    };
   });
 
   const move = (e: { global: { x: number; y: number } }) => {
@@ -292,7 +396,7 @@ function attachResizeHandlers(
   handleType: HandleType,
   layerId: string,
   onLayerChangeRef: React.MutableRefObject<
-    (id: string, changes: Partial<Layer>) => void
+    (id: string, changes: LayerChanges) => void
   >,
   layersRef: React.MutableRefObject<Layer[]>
 ) {
@@ -301,16 +405,15 @@ function attachResizeHandlers(
   let start: Rect = { x: 0, y: 0, width: 0, height: 0 };
 
   handle.on("pointerdown", (e) => {
+    if (e.button !== 0) return;
     e.stopPropagation();
     resizing = true;
     startPointer = { x: e.global.x, y: e.global.y };
     const layer = layersRef.current.find((l) => l.id === layerId);
-    start = {
-      x: layer?.x ?? 0,
-      y: layer?.y ?? 0,
-      width: layer?.width ?? 0,
-      height: layer?.height ?? 0,
-    };
+    start =
+      layer?.type === "image"
+        ? { x: layer.x, y: layer.y, width: layer.width, height: layer.height }
+        : { x: 0, y: 0, width: 0, height: 0 };
   });
 
   const move = (e: { global: { x: number; y: number } }) => {

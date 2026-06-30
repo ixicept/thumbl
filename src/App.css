@@ -26,24 +26,20 @@ body,
   height: 100vh;
 }
 
-.toolbar {
+.empty-state {
+  flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.75em;
-  padding: 0.5em 1em;
-  background-color: #252525;
-  border-bottom: 1px solid #3a3a3a;
+  justify-content: center;
+  gap: 1em;
+  color: #9a9a9a;
 }
 
-.toolbar h1 {
-  font-size: 1.1em;
-  margin: 0 1em 0 0;
-}
-
-.toolbar button {
+.empty-state button {
   border-radius: 6px;
   border: 1px solid #444;
-  padding: 0.4em 0.9em;
+  padding: 0.5em 1.2em;
   font-size: 0.95em;
   font-weight: 500;
   color: #f0f0f0;
@@ -51,18 +47,22 @@ body,
   cursor: pointer;
 }
 
-.toolbar button:hover {
+.empty-state button:hover {
   border-color: #4f9eff;
 }
 
-.toolbar button:active {
-  background-color: #3d3d3d;
+.workspace {
+  flex: 1;
+  display: flex;
+  min-height: 0;
 }
 
-.saved-path {
-  margin-left: auto;
-  font-size: 0.85em;
-  color: #9a9a9a;
+.layers-panel {
+  width: 240px;
+  flex-shrink: 0;
+  background-color: #252525;
+  border-right: 1px solid #3a3a3a;
+  overflow-y: auto;
 }
 
 .canvas-area {
@@ -70,7 +70,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: auto;
+  overflow: hidden;
   background-color: #1e1e1e;
 }
 

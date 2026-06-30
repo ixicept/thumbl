@@ -1,49 +1,76 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
+import { Assets } from "pixi.js";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { PixiCanvas } from "./canvas/PixiCanvas";
+import { openProject, pickImagePath, saveProjectAs } from "./project/io";
+import { createEmptyProject, type Layer, type Project } from "./types/project";
 import "./App.css";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const [project, setProject] = useState<Project>(createEmptyProject());
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [savedPath, setSavedPath] = useState<string | null>(null);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  function updateLayer(id: string, changes: Partial<Layer>) {
+    setProject((p) => ({
+      ...p,
+      layers: p.layers.map((l) => (l.id === id ? { ...l, ...changes } : l)),
+    }));
+  }
+
+  async function handleAddImage() {
+    const path = await pickImagePath();
+    if (!path) return;
+
+    const texture = await Assets.load(convertFileSrc(path));
+    const id = crypto.randomUUID();
+    const layer: Layer = {
+      id,
+      type: "image",
+      src: path,
+      x: 40,
+      y: 40,
+      width: texture.width,
+      height: texture.height,
+      rotation: 0,
+    };
+    setProject((p) => ({ ...p, layers: [...p.layers, layer] }));
+    setSelectedId(id);
+  }
+
+  async function handleSave() {
+    const path = await saveProjectAs(project);
+    if (path) setSavedPath(path);
+  }
+
+  async function handleOpen() {
+    const loaded = await openProject();
+    if (loaded) {
+      setProject(loaded);
+      setSelectedId(null);
+      setSavedPath(null);
+    }
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
+    <main className="app">
+      <header className="toolbar">
+        <h1>thumbl</h1>
+        <button onClick={handleAddImage}>Add Image</button>
+        <button onClick={handleSave}>Save Project</button>
+        <button onClick={handleOpen}>Open Project</button>
+        {savedPath && <span className="saved-path">Saved to {savedPath}</span>}
+      </header>
+      <div className="canvas-area">
+        <PixiCanvas
+          canvasWidth={project.canvasWidth}
+          canvasHeight={project.canvasHeight}
+          layers={project.layers}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onLayerChange={updateLayer}
         />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
+      </div>
     </main>
   );
 }

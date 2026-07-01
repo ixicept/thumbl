@@ -112,7 +112,7 @@ function App() {
       color: "#ffffff",
     };
     setProject({
-      version: 1,
+      version: 2,
       canvasWidth: width,
       canvasHeight: height,
       layers: [background],
@@ -127,6 +127,11 @@ function App() {
     if (!project) return;
     const texture = await Assets.load(convertFileSrc(path));
     const id = crypto.randomUUID();
+    const maxW = project.canvasWidth * 0.8;
+    const maxH = project.canvasHeight * 0.8;
+    const scale = Math.min(1, maxW / texture.width, maxH / texture.height);
+    const normW = (texture.width * scale) / project.canvasWidth;
+    const normH = (texture.height * scale) / project.canvasHeight;
     const layer: Layer = {
       id,
       type: "image",
@@ -134,10 +139,10 @@ function App() {
       visible: true,
       blendMode: "normal",
       src: path,
-      x: 40,
-      y: 40,
-      width: texture.width,
-      height: texture.height,
+      x: 0,
+      y: 0,
+      width: normW,
+      height: normH,
       rotation: 0,
     };
     setProject((p) => (p ? { ...p, layers: [...p.layers, layer] } : p));
@@ -164,8 +169,8 @@ function App() {
       visible: true,
       blendMode: "normal",
       text: "Your text",
-      x: project.canvasWidth / 2 - 100,
-      y: project.canvasHeight / 2 - 30,
+      x: 0,
+      y: 0,
       rotation: 0,
       fontFamily: fonts.some((f) => f.family === "Impact")
         ? "Impact"
@@ -181,8 +186,6 @@ function App() {
 
   function addShapeLayer(shapeKind: ShapeKind) {
     if (!project) return;
-    const cx = project.canvasWidth / 2;
-    const cy = project.canvasHeight / 2;
     const base = {
       id: crypto.randomUUID(),
       type: "shape" as const,
@@ -195,20 +198,22 @@ function App() {
       addLayer({
         ...base,
         shapeKind,
-        x1: cx - 150,
-        y1: cy,
-        x2: cx + 150,
-        y2: cy,
+        x1: -150 / project.canvasWidth,
+        y1: 0,
+        x2: 150 / project.canvasWidth,
+        y2: 0,
         strokeColor: "#000000",
       });
     } else {
+      const normW = 300 / project.canvasWidth;
+      const normH = 200 / project.canvasHeight;
       addLayer({
         ...base,
         shapeKind,
-        x: cx - 150,
-        y: cy - 100,
-        width: 300,
-        height: 200,
+        x: 0,
+        y: 0,
+        width: normW,
+        height: normH,
         rotation: 0,
         fill: "#4f9eff",
         strokeColor: "#000000",
@@ -251,6 +256,18 @@ function App() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement;
+      const isTyping =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable;
+
+      if (!isTyping && (e.key === "Backspace" || e.key === "Delete") && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        deleteSelectedLayer();
+        return;
+      }
+
       const ctrl = e.ctrlKey || e.metaKey;
       if (!ctrl) return;
       if (e.key === "n") {

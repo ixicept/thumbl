@@ -122,7 +122,7 @@ export type LayerChanges = Partial<Omit<ImageLayer, "type">> &
   Partial<Omit<ShapeLayer, "type">>;
 
 export interface Project {
-  version: 1;
+  version: 2;
   canvasWidth: number;
   canvasHeight: number;
   /** Stacking order: index 0 = bottom (back), last index = top (front). */
@@ -130,9 +130,47 @@ export interface Project {
   globalAdjustments: ColorAdjustments;
 }
 
-export function normalizeProject(project: Project): Project {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function normalizeProject(raw: any): Project {
+  // v1 → v2: pixel coords → normalized (center=0, canvas=1×1)
+  if ((raw.version ?? 1) < 2) {
+    const cw: number = raw.canvasWidth;
+    const ch: number = raw.canvasHeight;
+    raw.layers = (raw.layers as Layer[]).map((l) => {
+      if (l.type === "image") {
+        // v1 pixel top-left → normalized center
+        const nw = l.width / cw, nh = l.height / ch;
+        return { ...l, x: l.x / cw - 0.5 + nw / 2, y: l.y / ch - 0.5 + nh / 2, width: nw, height: nh };
+      }
+      if (l.type === "text") {
+        // text has no size in the model; best-effort top-left → normalized
+        return { ...l, x: l.x / cw - 0.5, y: l.y / ch - 0.5 };
+      }
+      if (l.type === "shape") {
+        if (l.shapeKind === "line" || l.shapeKind === "arrow") {
+          return {
+            ...l,
+            x1: (l.x1 ?? 0) / cw - 0.5, y1: (l.y1 ?? 0) / ch - 0.5,
+            x2: (l.x2 ?? 0) / cw - 0.5, y2: (l.y2 ?? 0) / ch - 0.5,
+          };
+        }
+        const nw = (l.width ?? 0) / cw, nh = (l.height ?? 0) / ch;
+        return {
+          ...l,
+          x: (l.x ?? 0) / cw - 0.5 + nw / 2,
+          y: (l.y ?? 0) / ch - 0.5 + nh / 2,
+          width: nw, height: nh,
+        };
+      }
+      return l;
+    });
+    raw.version = 2;
+  }
+
+  const project = raw as Project;
   return {
     ...project,
+    version: 2,
     globalAdjustments: project.globalAdjustments ?? { ...DEFAULT_COLOR_ADJUSTMENTS },
     layers: project.layers.map((layer, index) => ({
       ...layer,

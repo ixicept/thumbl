@@ -14,13 +14,22 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { ColorAdjustments, Layer, LayerChanges } from "../types/project";
 import { DEFAULT_COLOR_ADJUSTMENTS } from "../types/project";
 
-const HANDLE_SIZE = 10;
+const HANDLE_RADIUS = 6;
 const ENDPOINT_RADIUS = 6;
-const MIN_SIZE = 20;
+const ROTATION_STEM = 28;
+const MIN_SIZE = 0.01;   // normalized (1% of canvas)
 const MIN_FONT = 4;
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5;
 const SELECT_COLOR = 0x4f9eff;
+
+// Normalized ↔ pixel coordinate helpers
+// Normalized space: (0,0) = canvas center, canvas spans [-0.5, 0.5] × [-0.5, 0.5]
+// Sizes: 1.0 = full canvas width/height
+function toPixX(nx: number, cw: number) { return (nx + 0.5) * cw; }
+function toPixY(ny: number, ch: number) { return (ny + 0.5) * ch; }
+function toPixW(nw: number, cw: number) { return nw * cw; }
+function toPixH(nh: number, ch: number) { return nh * ch; }
 
 type HandleType = "tl" | "t" | "tr" | "r" | "br" | "b" | "bl" | "l";
 
@@ -106,7 +115,7 @@ function interactionFor(layer: Layer): Interaction {
   }
 }
 
-/** Bounding box (x/y/width/height) for box-style layers. */
+/** Bounding box in normalized coords for box-style layers. */
 function boxRect(layer: Layer): Rect {
   if (layer.type === "image") {
     return { x: layer.x, y: layer.y, width: layer.width, height: layer.height };
@@ -172,27 +181,22 @@ function buildColorFilter(adj: ColorAdjustments): ColorMatrixFilter | null {
   if (adj.saturation !== 1) f.saturate(adj.saturation - 1, true);
   if (adj.hue !== 0) f.hue(adj.hue, true);
 
-  // Copy matrix so setter is called (ensures GPU uniform update)
   const m = Array.from(f.matrix) as number[];
 
-  // Temperature: warm = +R -B, cool = -R +B
   const t = adj.temperature / 300;
   m[4] += t;
   m[14] -= t;
 
-  // Shadows lift (add constant offset — affects darks most)
   const [sr, sg, sb] = wheelToRGB(adj.shadows);
   m[4] += sr * 0.25;
   m[9] += sg * 0.25;
   m[14] += sb * 0.25;
 
-  // Highlights gain (multiply diagonal — affects brights most)
   const [hr, hg, hb] = wheelToRGB(adj.highlights);
   m[0] *= 1 + hr * 0.4;
   m[6] *= 1 + hg * 0.4;
   m[12] *= 1 + hb * 0.4;
 
-  // Midtones (blend of lift and gain)
   const [mr, mg, mb] = wheelToRGB(adj.midtones);
   m[4] += mr * 0.12;
   m[9] += mg * 0.12;
@@ -220,6 +224,8 @@ interface LayerEntry {
   content: Sprite | Graphics | Text;
   outline: Graphics;
   handles: Map<HandleType, Graphics>;
+  anchorHandle?: Graphics;
+  rotationHandle?: Graphics;
   endpointHandles: Graphics[];
   hitLine?: Graphics;
   cacheKey: string;
@@ -242,6 +248,8 @@ export function PixiCanvas({
   const layersRef = useRef<Layer[]>(layers);
   const onLayerChangeRef = useRef(onLayerChange);
   const onSelectRef = useRef(onSelect);
+  const cwRef = useRef(canvasWidth);
+  const chRef = useRef(canvasHeight);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -250,6 +258,8 @@ export function PixiCanvas({
   layersRef.current = layers;
   onLayerChangeRef.current = onLayerChange;
   onSelectRef.current = onSelect;
+  cwRef.current = canvasWidth;
+  chRef.current = canvasHeight;
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -389,6 +399,8 @@ export function PixiCanvas({
     const stage = stageRef.current;
     if (!stage) return;
 
+    const cw = canvasWidth;
+    const ch = canvasHeight;
     let cancelled = false;
 
     async function sync() {
@@ -430,10 +442,12 @@ export function PixiCanvas({
           const endpointHandles: Graphics[] = [];
           let hitLine: Graphics | undefined;
 
+          let anchorHandle: Graphics | undefined;
+          let rotHandle: Graphics | undefined;
           if (interaction === "box" || interaction === "text") {
             container.eventMode = "static";
             container.cursor = "move";
-            attachDragHandlers(container, layer.id, onSelectRef, onLayerChangeRef, layersRef);
+            attachDragHandlers(container, layer.id, onSelectRef, onLayerChangeRef, layersRef, cwRef, chRef);
             const defs = interaction === "text" ? CORNER_HANDLE_DEFS : BOX_HANDLE_DEFS;
             for (const { type, cursor } of defs) {
               const handle = new Graphics();
@@ -444,28 +458,41 @@ export function PixiCanvas({
               if (interaction === "text") {
                 attachTextResizeHandlers(handle, type, layer.id, onLayerChangeRef, layersRef);
               } else {
-                attachResizeHandlers(handle, type, layer.id, onLayerChangeRef, layersRef);
+                attachResizeHandlers(handle, type, layer.id, onLayerChangeRef, layersRef, cwRef, chRef);
               }
             }
+            // center anchor handle — drag moves the layer, same as body
+            anchorHandle = new Graphics();
+            anchorHandle.eventMode = "static";
+            anchorHandle.cursor = "move";
+            container.addChild(anchorHandle);
+            attachDragHandlers(anchorHandle, layer.id, onSelectRef, onLayerChangeRef, layersRef, cwRef, chRef);
+
+            // rotation handle — stem + circle above top-center
+            rotHandle = new Graphics();
+            rotHandle.eventMode = "static";
+            rotHandle.cursor = "crosshair";
+            container.addChild(rotHandle);
+            attachRotationHandlers(rotHandle, layer.id, onSelectRef, onLayerChangeRef, layersRef, cwRef, chRef);
           } else if (interaction === "endpoint") {
             hitLine = new Graphics();
             hitLine.eventMode = "static";
             hitLine.cursor = "move";
             container.addChild(hitLine);
-            attachLineBodyDragHandlers(hitLine, layer.id, onSelectRef, onLayerChangeRef, layersRef);
+            attachLineBodyDragHandlers(hitLine, layer.id, onSelectRef, onLayerChangeRef, layersRef, cwRef, chRef);
             for (const which of ["start", "end"] as const) {
               const handle = new Graphics();
               handle.eventMode = "static";
               handle.cursor = "move";
               container.addChild(handle);
               endpointHandles.push(handle);
-              attachEndpointHandlers(handle, which, layer.id, onLayerChangeRef, layersRef);
+              attachEndpointHandlers(handle, which, layer.id, onLayerChangeRef, layersRef, cwRef, chRef);
             }
           } else {
             container.eventMode = "none";
           }
 
-          entry = { container, content, outline, handles, endpointHandles, hitLine, cacheKey };
+          entry = { container, content, outline, handles, anchorHandle, rotationHandle: rotHandle, endpointHandles, hitLine, cacheKey };
           entries.set(layer.id, entry);
         }
 
@@ -474,23 +501,29 @@ export function PixiCanvas({
         entry.container.visible = layer.visible;
         entry.content.blendMode = layer.blendMode;
 
-        // Per-layer color filter (applied to content only, not handles/outline)
         const layerAdj = layer.colorAdjustments;
         const layerFilter = layerAdj ? buildColorFilter(layerAdj) : null;
         entry.content.filters = layerFilter ? [layerFilter] : [];
 
         // --- content geometry / styling ---
+        // x, y = CENTER of layer in normalized space.
+        // We set container.pivot to the layer's pixel center so position IS the center
+        // and rotation/scale always happen around that point.
         if (layer.type === "image") {
-          entry.container.position.set(layer.x, layer.y);
+          const pw = toPixW(layer.width, cw);
+          const ph = toPixH(layer.height, ch);
+          (entry.content as Sprite).width = pw;
+          (entry.content as Sprite).height = ph;
+          entry.container.pivot.set(pw / 2, ph / 2);
+          entry.container.position.set(toPixX(layer.x, cw), toPixY(layer.y, ch));
           entry.container.rotation = layer.rotation;
-          (entry.content as Sprite).width = layer.width;
-          (entry.content as Sprite).height = layer.height;
         } else if (layer.type === "fill") {
+          entry.container.pivot.set(0, 0);
           entry.container.position.set(0, 0);
           entry.container.rotation = 0;
           const g = entry.content as Graphics;
           g.clear();
-          g.rect(0, 0, canvasWidth, canvasHeight).fill(layer.color);
+          g.rect(0, 0, cw, ch).fill(layer.color);
         } else if (layer.type === "text") {
           const t = entry.content as Text;
           t.style = new TextStyle({
@@ -516,58 +549,88 @@ export function PixiCanvas({
               : {}),
           });
           t.text = layer.text;
-          entry.container.position.set(layer.x, layer.y);
+          // pivot at measured text center so rotation is around the text center
+          entry.container.pivot.set(t.width / 2, t.height / 2);
+          entry.container.position.set(toPixX(layer.x, cw), toPixY(layer.y, ch));
           entry.container.rotation = layer.rotation;
         } else if (layer.type === "shape") {
           const g = entry.content as Graphics;
           g.clear();
           if (layer.shapeKind === "rect" || layer.shapeKind === "ellipse") {
-            entry.container.position.set(layer.x ?? 0, layer.y ?? 0);
+            const pw = toPixW(layer.width ?? 0, cw);
+            const ph = toPixH(layer.height ?? 0, ch);
+            entry.container.pivot.set(pw / 2, ph / 2);
+            entry.container.position.set(toPixX(layer.x ?? 0, cw), toPixY(layer.y ?? 0, ch));
             entry.container.rotation = layer.rotation ?? 0;
-            const w = layer.width ?? 0;
-            const h = layer.height ?? 0;
-            if (layer.shapeKind === "rect") g.rect(0, 0, w, h);
-            else g.ellipse(w / 2, h / 2, w / 2, h / 2);
+            if (layer.shapeKind === "rect") g.rect(0, 0, pw, ph);
+            else g.ellipse(pw / 2, ph / 2, pw / 2, ph / 2);
             if (layer.fill) g.fill(layer.fill);
             if (layer.strokeWidth > 0 && layer.strokeColor)
               g.stroke({ width: layer.strokeWidth, color: layer.strokeColor });
           } else {
+            entry.container.pivot.set(0, 0);
             entry.container.position.set(0, 0);
             entry.container.rotation = 0;
-            drawLine(g, layer, false);
-            if (entry.hitLine) drawLine(entry.hitLine, layer, true);
+            drawLine(g, layer, false, cw, ch);
+            if (entry.hitLine) drawLine(entry.hitLine, layer, true, cw, ch);
           }
         }
 
-        // --- selection outline ---
+        // --- selection outline + handles ---
+        const pw = layer.type === "text" ? entry.content.width : toPixW(boxRect(layer).width, cw);
+        const ph = layer.type === "text" ? entry.content.height : toPixH(boxRect(layer).height, ch);
+
         entry.outline.clear();
         if (selected && (interaction === "box" || interaction === "text")) {
-          const w =
-            layer.type === "text" ? entry.content.width : boxRect(layer).width;
-          const h =
-            layer.type === "text" ? entry.content.height : boxRect(layer).height;
-          entry.outline.rect(0, 0, w, h).stroke({ width: 2, color: SELECT_COLOR });
+          entry.outline.rect(0, 0, pw, ph).stroke({ width: 1, color: SELECT_COLOR });
         }
 
-        // --- box / corner handles ---
+        // edge / corner handles — white circles with blue ring
         for (const [type, handle] of entry.handles) {
-          const w =
-            layer.type === "text" ? entry.content.width : boxRect(layer).width;
-          const h =
-            layer.type === "text" ? entry.content.height : boxRect(layer).height;
-          const { x, y } = handlePosition(type, w, h);
+          const { x, y } = handlePosition(type, pw, ph);
           handle.clear();
           handle
-            .rect(x - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
-            .fill(SELECT_COLOR);
+            .circle(x, y, HANDLE_RADIUS)
+            .fill(0xffffff)
+            .stroke({ width: 1.5, color: SELECT_COLOR });
           handle.visible = selected;
         }
 
-        // --- endpoint handles ---
+        // anchor point handle at center
+        if (entry.anchorHandle) {
+          const cx = pw / 2;
+          const cy = ph / 2;
+          entry.anchorHandle.clear();
+          entry.anchorHandle
+            .circle(cx, cy, HANDLE_RADIUS)
+            .fill(0xffffff)
+            .stroke({ width: 1.5, color: SELECT_COLOR });
+          entry.anchorHandle.circle(cx, cy, 2.5).fill(SELECT_COLOR);
+          entry.anchorHandle.visible = selected;
+        }
+
+        // rotation handle — stem line + circle above top-center
+        if (entry.rotationHandle) {
+          entry.rotationHandle.clear();
+          if (selected) {
+            const rx = pw / 2;
+            entry.rotationHandle
+              .moveTo(rx, 0)
+              .lineTo(rx, -ROTATION_STEM)
+              .stroke({ width: 1, color: SELECT_COLOR });
+            entry.rotationHandle
+              .circle(rx, -ROTATION_STEM, HANDLE_RADIUS)
+              .fill(0xffffff)
+              .stroke({ width: 1.5, color: SELECT_COLOR });
+          }
+          entry.rotationHandle.visible = selected;
+        }
+
+        // --- endpoint handles (converted from normalized to pixels) ---
         if (layer.type === "shape" && interaction === "endpoint") {
           const pts = [
-            { x: layer.x1 ?? 0, y: layer.y1 ?? 0 },
-            { x: layer.x2 ?? 0, y: layer.y2 ?? 0 },
+            { x: toPixX(layer.x1 ?? 0, cw), y: toPixY(layer.y1 ?? 0, ch) },
+            { x: toPixX(layer.x2 ?? 0, cw), y: toPixY(layer.y2 ?? 0, ch) },
           ];
           entry.endpointHandles.forEach((handle, i) => {
             handle.clear();
@@ -614,12 +677,14 @@ export function PixiCanvas({
 function drawLine(
   g: Graphics,
   layer: Extract<Layer, { type: "shape" }>,
-  hit: boolean
+  hit: boolean,
+  cw: number,
+  ch: number
 ) {
-  const x1 = layer.x1 ?? 0;
-  const y1 = layer.y1 ?? 0;
-  const x2 = layer.x2 ?? 0;
-  const y2 = layer.y2 ?? 0;
+  const x1 = toPixX(layer.x1 ?? 0, cw);
+  const y1 = toPixY(layer.y1 ?? 0, ch);
+  const x2 = toPixX(layer.x2 ?? 0, cw);
+  const y2 = toPixY(layer.y2 ?? 0, ch);
   const width = hit
     ? Math.max(16, layer.strokeWidth + 12)
     : Math.max(1, layer.strokeWidth);
@@ -644,7 +709,9 @@ function attachDragHandlers(
   layerId: string,
   onSelectRef: React.MutableRefObject<(id: string | null) => void>,
   onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
-  layersRef: React.MutableRefObject<Layer[]>
+  layersRef: React.MutableRefObject<Layer[]>,
+  cwRef: React.MutableRefObject<number>,
+  chRef: React.MutableRefObject<number>
 ) {
   let dragging = false;
   let startPointer = { x: 0, y: 0 };
@@ -665,7 +732,12 @@ function attachDragHandlers(
     if (!dragging) return;
     const dx = e.global.x - startPointer.x;
     const dy = e.global.y - startPointer.y;
-    onLayerChangeRef.current(layerId, { x: startPos.x + dx, y: startPos.y + dy });
+    const cw = cwRef.current;
+    const ch = chRef.current;
+    onLayerChangeRef.current(layerId, {
+      x: startPos.x + dx / cw,
+      y: startPos.y + dy / ch,
+    });
   };
 
   container.on("globalpointermove", move);
@@ -678,7 +750,9 @@ function attachResizeHandlers(
   handleType: HandleType,
   layerId: string,
   onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
-  layersRef: React.MutableRefObject<Layer[]>
+  layersRef: React.MutableRefObject<Layer[]>,
+  cwRef: React.MutableRefObject<number>,
+  chRef: React.MutableRefObject<number>
 ) {
   let resizing = false;
   let startPointer = { x: 0, y: 0 };
@@ -695,9 +769,25 @@ function attachResizeHandlers(
 
   const move = (e: { global: { x: number; y: number } }) => {
     if (!resizing) return;
-    const dx = e.global.x - startPointer.x;
-    const dy = e.global.y - startPointer.y;
-    onLayerChangeRef.current(layerId, computeResize(handleType, dx, dy, start));
+    const cw = cwRef.current;
+    const ch = chRef.current;
+    const dx = (e.global.x - startPointer.x) / cw;
+    const dy = (e.global.y - startPointer.y) / ch;
+    // start.x/y is the CENTER; computeResize expects top-left
+    const startTL = {
+      x: start.x - start.width / 2,
+      y: start.y - start.height / 2,
+      width: start.width,
+      height: start.height,
+    };
+    const r = computeResize(handleType, dx, dy, startTL);
+    // convert result back to center
+    onLayerChangeRef.current(layerId, {
+      x: r.x + r.width / 2,
+      y: r.y + r.height / 2,
+      width: r.width,
+      height: r.height,
+    });
   };
 
   handle.on("globalpointermove", move);
@@ -744,7 +834,9 @@ function attachLineBodyDragHandlers(
   layerId: string,
   onSelectRef: React.MutableRefObject<(id: string | null) => void>,
   onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
-  layersRef: React.MutableRefObject<Layer[]>
+  layersRef: React.MutableRefObject<Layer[]>,
+  cwRef: React.MutableRefObject<number>,
+  chRef: React.MutableRefObject<number>
 ) {
   let dragging = false;
   let startPointer = { x: 0, y: 0 };
@@ -769,8 +861,10 @@ function attachLineBodyDragHandlers(
 
   const move = (e: { global: { x: number; y: number } }) => {
     if (!dragging) return;
-    const dx = e.global.x - startPointer.x;
-    const dy = e.global.y - startPointer.y;
+    const cw = cwRef.current;
+    const ch = chRef.current;
+    const dx = (e.global.x - startPointer.x) / cw;
+    const dy = (e.global.y - startPointer.y) / ch;
     onLayerChangeRef.current(layerId, {
       x1: s.x1 + dx,
       y1: s.y1 + dy,
@@ -789,7 +883,9 @@ function attachEndpointHandlers(
   which: "start" | "end",
   layerId: string,
   onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
-  layersRef: React.MutableRefObject<Layer[]>
+  layersRef: React.MutableRefObject<Layer[]>,
+  cwRef: React.MutableRefObject<number>,
+  chRef: React.MutableRefObject<number>
 ) {
   let active = false;
   let startPointer = { x: 0, y: 0 };
@@ -811,13 +907,57 @@ function attachEndpointHandlers(
 
   const move = (e: { global: { x: number; y: number } }) => {
     if (!active) return;
-    const dx = e.global.x - startPointer.x;
-    const dy = e.global.y - startPointer.y;
+    const cw = cwRef.current;
+    const ch = chRef.current;
+    const dx = (e.global.x - startPointer.x) / cw;
+    const dy = (e.global.y - startPointer.y) / ch;
     const changes: LayerChanges =
       which === "start"
         ? { x1: start.x + dx, y1: start.y + dy }
         : { x2: start.x + dx, y2: start.y + dy };
     onLayerChangeRef.current(layerId, changes);
+  };
+
+  handle.on("globalpointermove", move);
+  handle.on("pointerup", () => (active = false));
+  handle.on("pointerupoutside", () => (active = false));
+}
+
+function attachRotationHandlers(
+  handle: Graphics,
+  layerId: string,
+  onSelectRef: React.MutableRefObject<(id: string | null) => void>,
+  onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
+  layersRef: React.MutableRefObject<Layer[]>,
+  cwRef: React.MutableRefObject<number>,
+  chRef: React.MutableRefObject<number>
+) {
+  let active = false;
+  let startAngle = 0;
+  let startRotation = 0;
+  let center = { x: 0, y: 0 };
+
+  handle.on("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    onSelectRef.current(layerId);
+    active = true;
+    const layer = layersRef.current.find((l) => l.id === layerId);
+    if (!layer) return;
+    const cw = cwRef.current;
+    const ch = chRef.current;
+    // layer center in PixiJS canvas pixels
+    const lx = (layer as { x?: number }).x ?? 0;
+    const ly = (layer as { y?: number }).y ?? 0;
+    center = { x: toPixX(lx, cw), y: toPixY(ly, ch) };
+    startRotation = (layer as { rotation?: number }).rotation ?? 0;
+    startAngle = Math.atan2(e.global.y - center.y, e.global.x - center.x);
+  });
+
+  const move = (e: { global: { x: number; y: number } }) => {
+    if (!active) return;
+    const currentAngle = Math.atan2(e.global.y - center.y, e.global.x - center.x);
+    onLayerChangeRef.current(layerId, { rotation: startRotation + (currentAngle - startAngle) });
   };
 
   handle.on("globalpointermove", move);

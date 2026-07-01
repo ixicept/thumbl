@@ -348,8 +348,6 @@ function ColorProps({
 
 function TransformProps({
   layer,
-  canvasWidth,
-  canvasHeight,
   set,
 }: {
   layer: Layer;
@@ -357,9 +355,11 @@ function TransformProps({
   canvasHeight: number;
   set: (c: LayerChanges) => void;
 }) {
-  const xRange = { min: -canvasWidth, max: canvasWidth * 2 };
-  const yRange = { min: -canvasHeight, max: canvasHeight * 2 };
-  const sizeRange = { min: 1, max: Math.max(canvasWidth, canvasHeight) * 2 };
+  // Normalized space: position ±1.5 range, size 0–2 range, step 0.001
+  const posRange = { min: -1.5, max: 1.5, step: 0.001 };
+  const sizeRange = { min: 0.001, max: 2, step: 0.001 };
+
+  const fmt = (v: number) => parseFloat(v.toFixed(3));
 
   if (layer.type === "fill") {
     return <p className="prop-note">Background fills the whole canvas.</p>;
@@ -368,10 +368,10 @@ function TransformProps({
   if (layer.type === "shape" && (layer.shapeKind === "line" || layer.shapeKind === "arrow")) {
     return (
       <>
-        <SliderRow label="X1" value={Math.round(layer.x1 ?? 0)} {...xRange} onChange={(v) => set({ x1: v })} />
-        <SliderRow label="Y1" value={Math.round(layer.y1 ?? 0)} {...yRange} onChange={(v) => set({ y1: v })} />
-        <SliderRow label="X2" value={Math.round(layer.x2 ?? 0)} {...xRange} onChange={(v) => set({ x2: v })} />
-        <SliderRow label="Y2" value={Math.round(layer.y2 ?? 0)} {...yRange} onChange={(v) => set({ y2: v })} />
+        <SliderRow label="X1" value={fmt(layer.x1 ?? 0)} {...posRange} onChange={(v) => set({ x1: v })} />
+        <SliderRow label="Y1" value={fmt(layer.y1 ?? 0)} {...posRange} onChange={(v) => set({ y1: v })} />
+        <SliderRow label="X2" value={fmt(layer.x2 ?? 0)} {...posRange} onChange={(v) => set({ x2: v })} />
+        <SliderRow label="Y2" value={fmt(layer.y2 ?? 0)} {...posRange} onChange={(v) => set({ y2: v })} />
       </>
     );
   }
@@ -383,19 +383,19 @@ function TransformProps({
 
   return (
     <>
-      <SliderRow label="X" value={Math.round(x)} {...xRange} onChange={(v) => set({ x: v })} />
-      <SliderRow label="Y" value={Math.round(y)} {...yRange} onChange={(v) => set({ y: v })} />
+      <SliderRow label="X" value={fmt(x)} {...posRange} onChange={(v) => set({ x: v })} />
+      <SliderRow label="Y" value={fmt(y)} {...posRange} onChange={(v) => set({ y: v })} />
       {hasSize && (
         <>
           <SliderRow
             label="Width"
-            value={Math.round((layer as { width?: number }).width ?? 0)}
+            value={fmt((layer as { width?: number }).width ?? 0)}
             {...sizeRange}
             onChange={(v) => set({ width: v })}
           />
           <SliderRow
             label="Height"
-            value={Math.round((layer as { height?: number }).height ?? 0)}
+            value={fmt((layer as { height?: number }).height ?? 0)}
             {...sizeRange}
             onChange={(v) => set({ height: v })}
           />

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type {
   ColorAdjustments,
+  ImageLayer,
   Layer,
   LayerChanges,
   TextDropShadow,
@@ -28,7 +30,7 @@ function tabsFor(layer: Layer): string[] {
     case "shape":
       return ["Shape", "Color", "Transform"];
     case "image":
-      return ["Color", "Transform"];
+      return ["Image", "Color", "Transform"];
     case "fill":
       return ["Fill", "Color"];
   }
@@ -73,6 +75,9 @@ export function PropertiesPanel({
       </div>
 
       <div className="prop-tab-body">
+        {tab === "Image" && layer.type === "image" && (
+          <ImageToolsProps layer={layer} set={set!} />
+        )}
         {tab === "Text" && layer.type === "text" && (
           <TextProps layer={layer} fonts={fonts} set={set!} />
         )}
@@ -409,6 +414,91 @@ function TransformProps({
         onChange={(v) => set({ rotation: degToRad(v) })}
       />
     </>
+  );
+}
+
+// --- Image tab ---
+
+const API_KEY_STORAGE = "thumbl_rmbg_api_key";
+
+type BgPhase = "idle" | "processing" | "error";
+
+function ImageToolsProps({
+  layer,
+  set,
+}: {
+  layer: ImageLayer;
+  set: (c: LayerChanges) => void;
+}) {
+  const [phase, setPhase] = useState<BgPhase>("idle");
+  const [errMsg, setErrMsg] = useState("");
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE) ?? "");
+
+  function saveKey(k: string) {
+    setApiKey(k);
+    localStorage.setItem(API_KEY_STORAGE, k);
+  }
+
+  async function handleRemove() {
+    if (!apiKey.trim()) {
+      setErrMsg("Enter a remove.bg API key first.");
+      setPhase("error");
+      return;
+    }
+    setPhase("processing");
+    try {
+      const newPath = await invoke<string>("remove_background_api", {
+        srcPath: layer.src,
+        apiKey: apiKey.trim(),
+      });
+      set({ src: newPath });
+      setPhase("idle");
+    } catch (e) {
+      setErrMsg(String(e));
+      setPhase("error");
+    }
+  }
+
+  return (
+    <Section title="AI Tools">
+      <div className="prop-bg-remove">
+        <PropRow label="API Key">
+          <input
+            type="password"
+            className="prop-api-key-input"
+            placeholder="remove.bg key"
+            value={apiKey}
+            onChange={(e) => saveKey(e.target.value)}
+          />
+        </PropRow>
+        <p className="prop-note">
+          Free at{" "}
+          <a
+            className="prop-link"
+            href="https://www.remove.bg/api"
+            target="_blank"
+            rel="noreferrer"
+          >
+            remove.bg
+          </a>{" "}
+          (50 credits/month)
+        </p>
+        {phase === "processing" ? (
+          <p className="prop-note">Removing background...</p>
+        ) : (
+          <button
+            className="prop-action-btn"
+            disabled={!apiKey.trim()}
+            onClick={() => void handleRemove()}
+          >
+            Remove Background
+          </button>
+        )}
+        {phase === "error" && (
+          <p className="prop-note prop-error">{errMsg}</p>
+        )}
+      </div>
+    </Section>
   );
 }
 

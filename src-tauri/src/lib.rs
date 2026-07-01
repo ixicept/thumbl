@@ -77,6 +77,49 @@ async fn proxy_image(url: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn remove_background_api(src_path: String, api_key: String) -> Result<String, String> {
+    let img_bytes = std::fs::read(&src_path).map_err(|e| e.to_string())?;
+    let filename = std::path::Path::new(&src_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("image.jpg")
+        .to_string();
+
+    let part = reqwest::multipart::Part::bytes(img_bytes).file_name(filename);
+    let form = reqwest::multipart::Form::new()
+        .part("image_file", part)
+        .text("size", "auto");
+
+    let client = reqwest::Client::builder()
+        .user_agent("Thumbl/1.0")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .post("https://api.remove.bg/v1.0/removebg")
+        .header("X-Api-Key", &api_key)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("remove.bg {}: {}", status, body));
+    }
+
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let out_path = std::env::temp_dir().join(format!("thumbl_nobg_{}.png", ts));
+    std::fs::write(&out_path, &bytes).map_err(|e| e.to_string())?;
+    Ok(out_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 async fn save_image_file(data_url: String, path: String) -> Result<(), String> {
     use base64::Engine;
     let b64 = data_url
@@ -91,7 +134,6 @@ async fn save_image_file(data_url: String, path: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn download_image_to_temp(url: String) -> Result<String, String> {
-    // Reject non-http(s) schemes up front (e.g. data:, ftp:) with a clear message
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(format!("Unsupported URL scheme: {}", url));
     }
@@ -130,7 +172,6 @@ async fn download_image_to_temp(url: String) -> Result<String, String> {
             "image/bmp" => "bmp".to_string(),
             "image/avif" => "avif".to_string(),
             _ => {
-                // fall back to URL path extension
                 let path_part = url.split('?').next().unwrap_or(&url);
                 let last = path_part.rsplit('/').next().unwrap_or("");
                 let maybe = last.rsplit('.').next().unwrap_or("").to_lowercase();
@@ -197,7 +238,6 @@ fn variant_label(weight: u32, italic: bool) -> String {
 #[tauri::command]
 fn list_system_fonts() -> Vec<FontFamily> {
     let source = SystemSource::new();
-    // family name -> set of (weight, italic) variants
     let mut map: BTreeMap<String, Vec<(u32, bool)>> = BTreeMap::new();
 
     if let Ok(handles) = source.all_fonts() {
@@ -238,7 +278,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![list_system_fonts, search_images, proxy_image, download_image_to_temp, save_image_file])
+        .invoke_handler(tauri::generate_handler![
+            list_system_fonts,
+            search_images,
+            proxy_image,
+            download_image_to_temp,
+            save_image_file,
+            remove_background_api,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

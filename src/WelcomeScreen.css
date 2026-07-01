@@ -1,0 +1,202 @@
+.welcome {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1a1a;
+  overflow-y: auto;
+}
+
+.welcome-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2.2em;
+  width: 100%;
+  max-width: 520px;
+  padding: 3em 1.5em;
+}
+
+/* --- hero --- */
+
+.welcome-hero {
+  text-align: center;
+}
+
+.welcome-title {
+  font-size: 2.8em;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #f0f0f0;
+  margin: 0 0 0.2em;
+}
+
+.welcome-subtitle {
+  font-size: 0.95em;
+  color: #777;
+  margin: 0;
+}
+
+/* --- action buttons --- */
+
+.welcome-actions {
+  display: flex;
+  gap: 1em;
+  width: 100%;
+}
+
+.welcome-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35em;
+  padding: 1.4em 1em;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.welcome-btn-icon {
+  font-size: 1.6em;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.welcome-btn-label {
+  font-size: 0.95em;
+  font-weight: 600;
+  color: inherit;
+}
+
+.welcome-btn-hint {
+  font-size: 0.78em;
+  opacity: 0.65;
+}
+
+.welcome-btn-primary {
+  background: #1e3a5f;
+  border: 1.5px solid #4f9eff;
+  color: #e8f0ff;
+}
+
+.welcome-btn-primary .welcome-btn-icon {
+  color: #4f9eff;
+  font-size: 2em;
+  font-weight: 300;
+}
+
+.welcome-btn-primary:hover {
+  background: #264d7a;
+  border-color: #79b8ff;
+}
+
+.welcome-btn-secondary {
+  background: #252525;
+  border: 1.5px solid #3a3a3a;
+  color: #ccc;
+}
+
+.welcome-btn-secondary:hover {
+  background: #2e2e2e;
+  border-color: #555;
+}
+
+/* --- recent files --- */
+
+.welcome-recent {
+  width: 100%;
+}
+
+.welcome-recent-heading {
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #666;
+  margin: 0 0 0.6em;
+}
+
+.welcome-recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.welcome-recent-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.5em 0.75em;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: #ccc;
+  transition: background 0.1s;
+}
+
+.welcome-recent-item:hover {
+  background: #2a2a2a;
+  color: #f0f0f0;
+}
+
+.welcome-recent-icon {
+  flex-shrink: 0;
+  color: #555;
+}
+
+.welcome-recent-item:hover .welcome-recent-icon {
+  color: #4f9eff;
+}
+
+.welcome-recent-name {
+  font-size: 0.88em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.welcome-recent-path {
+  font-size: 0.75em;
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  direction: rtl;
+  text-align: left;
+}
+
+.welcome-recent-item:hover .welcome-recent-path {
+  color: #777;
+}
+
+/* --- shortcuts footer --- */
+
+.welcome-shortcuts {
+  font-size: 0.78em;
+  color: #555;
+  margin: 0;
+}
+
+.welcome-shortcuts kbd {
+  display: inline-block;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+  font-family: inherit;
+  font-size: 0.9em;
+  color: #888;
+}

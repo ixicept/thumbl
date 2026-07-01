@@ -54,30 +54,6 @@ body,
   height: 100vh;
 }
 
-.empty-state {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1em;
-  color: #9a9a9a;
-}
-
-.empty-state button {
-  border-radius: 6px;
-  border: 1px solid #444;
-  padding: 0.5em 1.2em;
-  font-size: 0.95em;
-  font-weight: 500;
-  color: #f0f0f0;
-  background-color: #333;
-  cursor: pointer;
-}
-
-.empty-state button:hover {
-  border-color: #4f9eff;
-}
 
 .main-area {
   flex: 1;

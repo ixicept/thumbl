@@ -32,6 +32,14 @@ export async function openProject(): Promise<{ project: Project; path: string } 
     filters: [{ name: "Thumbl Project", extensions: ["json"] }],
   });
   if (typeof path !== "string") return null;
-  const text = await readTextFile(path);
-  return { project: normalizeProject(JSON.parse(text) as Project), path };
+  return openProjectFromPath(path);
+}
+
+export async function openProjectFromPath(path: string): Promise<{ project: Project; path: string } | null> {
+  try {
+    const text = await readTextFile(path);
+    return { project: normalizeProject(JSON.parse(text) as Project), path };
+  } catch {
+    return null;
+  }
 }

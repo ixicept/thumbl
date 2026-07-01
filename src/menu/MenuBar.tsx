@@ -3,9 +3,10 @@ import "./MenuBar.css";
 
 export interface MenuItem {
   label: string;
-  onClick: () => void;
+  onClick?: () => void;
   disabled?: boolean;
   shortcut?: string;
+  separator?: boolean;
 }
 
 interface MenuBarProps {
@@ -42,22 +43,26 @@ export function MenuBar({ title, menus }: MenuBarProps) {
           </button>
           {openMenu === menu.label && (
             <div className="menu-dropdown">
-              {menu.items.map((item) => (
-                <button
-                  key={item.label}
-                  className="menu-item"
-                  disabled={item.disabled}
-                  onClick={() => {
-                    setOpenMenu(null);
-                    item.onClick();
-                  }}
-                >
-                  <span>{item.label}</span>
-                  {item.shortcut && (
-                    <span className="menu-item-shortcut">{item.shortcut}</span>
-                  )}
-                </button>
-              ))}
+              {menu.items.map((item, i) =>
+                item.separator ? (
+                  <hr key={i} className="menu-separator" />
+                ) : (
+                  <button
+                    key={item.label}
+                    className="menu-item"
+                    disabled={item.disabled}
+                    onClick={() => {
+                      setOpenMenu(null);
+                      item.onClick?.();
+                    }}
+                  >
+                    <span>{item.label}</span>
+                    {item.shortcut && (
+                      <span className="menu-item-shortcut">{item.shortcut}</span>
+                    )}
+                  </button>
+                )
+              )}
             </div>
           )}
         </div>

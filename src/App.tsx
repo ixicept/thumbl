@@ -9,16 +9,19 @@ import { LayersPanel } from "./panels/LayersPanel";
 import { PropertiesPanel } from "./panels/PropertiesPanel";
 import { BrowserPanel } from "./panels/BrowserPanel";
 import { MenuBar } from "./menu/MenuBar";
+import { WelcomeScreen } from "./WelcomeScreen";
 import { NewCanvasDialog } from "./dialogs/NewCanvasDialog";
 import { ExportDialog } from "./dialogs/ExportDialog";
 import { EmojiPicker } from "./dialogs/EmojiPicker";
 import { loadFonts, type FontFamily } from "./fonts";
 import {
   openProject,
+  openProjectFromPath,
   pickImagePath,
   saveProject,
   saveProjectAs,
 } from "./project/io";
+import { addRecentFile, getRecentFiles, removeRecentFile, type RecentFile } from "./project/recentFiles";
 import type {
   BlendMode,
   ColorAdjustments,
@@ -47,6 +50,7 @@ function App() {
   const [browserHeight, setBrowserHeight] = useState(260);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [recentFiles, setRecentFiles] = useState<RecentFile[]>(() => getRecentFiles());
   const isResizingBrowser = useRef(false);
   const canvasRef = useRef<PixiCanvasHandle>(null);
 
@@ -260,16 +264,23 @@ function App() {
     if (!project) return;
     if (filePath) {
       await saveProject(project, filePath);
+      setRecentFiles(addRecentFile(filePath, basename(filePath)));
     } else {
       const path = await saveProjectAs(project);
-      if (path) setFilePath(path);
+      if (path) {
+        setFilePath(path);
+        setRecentFiles(addRecentFile(path, basename(path)));
+      }
     }
   }
 
   async function handleSaveAs() {
     if (!project) return;
     const path = await saveProjectAs(project);
-    if (path) setFilePath(path);
+    if (path) {
+      setFilePath(path);
+      setRecentFiles(addRecentFile(path, basename(path)));
+    }
   }
 
   async function handleOpen() {
@@ -278,6 +289,19 @@ function App() {
       resetProject(result.project);
       setFilePath(result.path);
       setSelectedId(null);
+      setRecentFiles(addRecentFile(result.path, basename(result.path)));
+    }
+  }
+
+  async function handleOpenRecent(path: string) {
+    const result = await openProjectFromPath(path);
+    if (result) {
+      resetProject(result.project);
+      setFilePath(result.path);
+      setSelectedId(null);
+      setRecentFiles(addRecentFile(result.path, basename(result.path)));
+    } else {
+      setRecentFiles(removeRecentFile(path));
     }
   }
 
@@ -355,6 +379,14 @@ function App() {
                 onClick: () => setShowNewCanvasDialog(true),
               },
               { label: "Open Project...", shortcut: "Ctrl+O", onClick: () => void handleOpen() },
+              { label: "", separator: true, onClick: () => {} },
+              ...(recentFiles.length > 0
+                ? recentFiles.map((f) => ({
+                    label: f.name,
+                    onClick: () => void handleOpenRecent(f.path),
+                  }))
+                : [{ label: "No recent files", disabled: true, onClick: () => {} }]),
+              { label: "", separator: true, onClick: () => {} },
               {
                 label: "Save",
                 shortcut: "Ctrl+S",
@@ -494,11 +526,12 @@ function App() {
         )}
         </div>
       ) : (
-        <div className="empty-state">
-          <p>No canvas open</p>
-          <button onClick={() => setShowNewCanvasDialog(true)}>New Canvas</button>
-          <button onClick={() => void handleOpen()}>Open Project</button>
-        </div>
+        <WelcomeScreen
+          recentFiles={recentFiles}
+          onNewCanvas={() => setShowNewCanvasDialog(true)}
+          onOpen={() => void handleOpen()}
+          onOpenRecent={(path) => void handleOpenRecent(path)}
+        />
       )}
       {showNewCanvasDialog && (
         <NewCanvasDialog

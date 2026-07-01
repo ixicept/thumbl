@@ -76,3 +76,9 @@
   font-size: 0.85em;
   margin-left: 1em;
 }
+
+.menu-separator {
+  border: none;
+  border-top: 1px solid #3a3a3a;
+  margin: 0.2em 0;
+}

@@ -77,6 +77,19 @@ async fn proxy_image(url: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn save_image_file(data_url: String, path: String) -> Result<(), String> {
+    use base64::Engine;
+    let b64 = data_url
+        .splitn(2, ',')
+        .nth(1)
+        .ok_or("Invalid data URL")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn download_image_to_temp(url: String) -> Result<String, String> {
     // Reject non-http(s) schemes up front (e.g. data:, ftp:) with a clear message
     if !url.starts_with("http://") && !url.starts_with("https://") {
@@ -225,7 +238,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![list_system_fonts, search_images, proxy_image, download_image_to_temp])
+        .invoke_handler(tauri::generate_handler![list_system_fonts, search_images, proxy_image, download_image_to_temp, save_image_file])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

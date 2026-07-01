@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
 import { Assets } from "pixi.js";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { PixiCanvas } from "./canvas/PixiCanvas";
+import { PixiCanvas, type PixiCanvasHandle } from "./canvas/PixiCanvas";
 import { LayersPanel } from "./panels/LayersPanel";
 import { PropertiesPanel } from "./panels/PropertiesPanel";
 import { BrowserPanel } from "./panels/BrowserPanel";
 import { MenuBar } from "./menu/MenuBar";
 import { NewCanvasDialog } from "./dialogs/NewCanvasDialog";
+import { ExportDialog } from "./dialogs/ExportDialog";
 import { loadFonts, type FontFamily } from "./fonts";
 import {
   openProject,
@@ -39,7 +41,9 @@ function App() {
   const [fonts, setFonts] = useState<FontFamily[]>([]);
   const [showBrowser, setShowBrowser] = useState(false);
   const [browserHeight, setBrowserHeight] = useState(260);
+  const [showExportDialog, setShowExportDialog] = useState(false);
   const isResizingBrowser = useRef(false);
+  const canvasRef = useRef<PixiCanvasHandle>(null);
 
   useEffect(() => {
     void loadFonts().then(setFonts);
@@ -221,6 +225,19 @@ function App() {
     }
   }
 
+  async function handleExport(format: "png" | "jpeg", quality: number) {
+    setShowExportDialog(false);
+    if (!canvasRef.current) return;
+    const ext = format === "jpeg" ? "jpg" : "png";
+    const path = await save({
+      filters: [{ name: "Image", extensions: [ext] }],
+      defaultPath: `thumbnail.${ext}`,
+    });
+    if (!path) return;
+    const dataUrl = await canvasRef.current.exportImage(format, quality);
+    await invoke("save_image_file", { dataUrl, path });
+  }
+
   async function handleSave() {
     if (!project) return;
     if (filePath) {
@@ -288,6 +305,9 @@ function App() {
       } else if (e.key === "b") {
         e.preventDefault();
         setShowBrowser((v) => !v);
+      } else if (e.key === "e") {
+        e.preventDefault();
+        if (project) setShowExportDialog(true);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -326,6 +346,12 @@ function App() {
               {
                 label: "Import Image...",
                 onClick: () => void handleImportImage(),
+                disabled: !project,
+              },
+              {
+                label: "Export Image...",
+                shortcut: "Ctrl+E",
+                onClick: () => setShowExportDialog(true),
                 disabled: !project,
               },
               { label: "Exit", onClick: () => void getCurrentWindow().close() },
@@ -386,6 +412,7 @@ function App() {
           </aside>
           <div className="canvas-area">
             <PixiCanvas
+              ref={canvasRef}
               canvasWidth={project.canvasWidth}
               canvasHeight={project.canvasHeight}
               layers={project.layers}
@@ -450,6 +477,14 @@ function App() {
         <NewCanvasDialog
           onCreate={handleNewCanvas}
           onCancel={() => setShowNewCanvasDialog(false)}
+        />
+      )}
+      {showExportDialog && project && (
+        <ExportDialog
+          canvasWidth={project.canvasWidth}
+          canvasHeight={project.canvasHeight}
+          onExport={(fmt, q) => void handleExport(fmt, q)}
+          onCancel={() => setShowExportDialog(false)}
         />
       )}
     </main>

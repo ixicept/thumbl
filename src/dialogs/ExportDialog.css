@@ -1,0 +1,56 @@
+.export-canvas-size {
+  font-size: 0.82em;
+  color: #888;
+  margin: 0 0 1em;
+}
+
+.export-format-row {
+  display: flex;
+  gap: 0.5em;
+  margin-bottom: 1em;
+}
+
+.export-format-btn {
+  flex: 1;
+  padding: 0.5em;
+  background: #1e1e1e;
+  border: 1px solid #3a3a3a;
+  border-radius: 5px;
+  color: #ccc;
+  font-size: 0.88em;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.04em;
+}
+
+.export-format-btn.active {
+  background: #1e3a5f;
+  border-color: #4f9eff;
+  color: #fff;
+}
+
+.export-quality-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  margin-bottom: 1em;
+}
+
+.export-quality-label {
+  font-size: 0.82em;
+  color: #aaa;
+  flex-shrink: 0;
+}
+
+.export-quality-slider {
+  flex: 1;
+  accent-color: #4f9eff;
+}
+
+.export-quality-value {
+  font-size: 0.82em;
+  color: #ccc;
+  width: 2.5em;
+  text-align: right;
+  flex-shrink: 0;
+}

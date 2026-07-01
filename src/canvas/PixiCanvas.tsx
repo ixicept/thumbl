@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   Application,
   Assets,
@@ -209,6 +209,10 @@ function buildColorFilter(adj: ColorAdjustments): ColorMatrixFilter | null {
   return f;
 }
 
+export interface PixiCanvasHandle {
+  exportImage(format: "png" | "jpeg", quality?: number): Promise<string>;
+}
+
 interface PixiCanvasProps {
   canvasWidth: number;
   canvasHeight: number;
@@ -231,7 +235,7 @@ interface LayerEntry {
   cacheKey: string;
 }
 
-export function PixiCanvas({
+export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function PixiCanvas({
   canvasWidth,
   canvasHeight,
   layers,
@@ -239,7 +243,7 @@ export function PixiCanvas({
   globalAdjustments,
   onSelect,
   onLayerChange,
-}: PixiCanvasProps) {
+}: PixiCanvasProps, ref) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const appRef = useRef<Application | null>(null);
@@ -660,6 +664,40 @@ export function PixiCanvas({
     };
   }, [layers, selectedId, canvasWidth, canvasHeight, stageReady]);
 
+  useImperativeHandle(ref, () => ({
+    async exportImage(format: "png" | "jpeg", quality = 0.92): Promise<string> {
+      const app = appRef.current;
+      if (!app) throw new Error("Canvas not ready");
+
+      // hide all selection UI before capturing
+      const hidden: Graphics[] = [];
+      for (const entry of entriesRef.current.values()) {
+        const nodes = [
+          entry.outline,
+          ...Array.from(entry.handles.values()),
+          entry.anchorHandle,
+          entry.rotationHandle,
+          ...entry.endpointHandles,
+          entry.hitLine,
+        ].filter((n): n is Graphics => !!n);
+        for (const n of nodes) {
+          if (n.visible) { n.visible = false; hidden.push(n); }
+        }
+      }
+
+      // render a clean frame then extract
+      app.renderer.render(app.stage);
+      const c2d = app.renderer.extract.canvas(app.stage) as HTMLCanvasElement;
+      const mimeType = format === "jpeg" ? "image/jpeg" : "image/png";
+      const dataUrl = c2d.toDataURL(mimeType, quality);
+
+      // restore UI
+      for (const n of hidden) n.visible = true;
+
+      return dataUrl;
+    },
+  }), []);
+
   return (
     <div ref={viewportRef} className="pixi-canvas-viewport">
       <div
@@ -672,7 +710,7 @@ export function PixiCanvas({
       />
     </div>
   );
-}
+});
 
 function drawLine(
   g: Graphics,

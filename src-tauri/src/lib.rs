@@ -272,6 +272,146 @@ fn list_system_fonts() -> Vec<FontFamily> {
         .collect()
 }
 
+const U2NET_URL: &str =
+    "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx";
+
+fn model_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("u2net.onnx"))
+}
+
+#[tauri::command]
+async fn get_bg_model_status(app: tauri::AppHandle) -> Result<bool, String> {
+    Ok(model_path(&app)?.exists())
+}
+
+#[tauri::command]
+async fn download_bg_model(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let path = model_path(&app)?;
+    std::fs::create_dir_all(
+        app.path().app_data_dir().map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let client = reqwest::Client::builder()
+        .user_agent("Thumbl/1.0")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(U2NET_URL)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Download failed: HTTP {}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn remove_background_local(
+    app: tauri::AppHandle,
+    src_path: String,
+) -> Result<String, String> {
+    let path = model_path(&app)?;
+    if !path.exists() {
+        return Err("Model not downloaded.".to_string());
+    }
+    let model_str = path.to_string_lossy().to_string();
+    let result_bytes = tokio::task::spawn_blocking(move || run_u2net(&model_str, &src_path))
+        .await
+        .map_err(|e| e.to_string())??;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let out = std::env::temp_dir().join(format!("thumbl_nobg_{}.png", ts));
+    std::fs::write(&out, &result_bytes).map_err(|e| e.to_string())?;
+    Ok(out.to_string_lossy().to_string())
+}
+
+fn run_u2net(model_path: &str, src_path: &str) -> Result<Vec<u8>, String> {
+    use image::{GenericImageView, RgbaImage};
+    use tract_onnx::prelude::*;
+
+    let model = tract_onnx::onnx()
+        .model_for_path(model_path)
+        .map_err(|e| e.to_string())?
+        .into_optimized()
+        .map_err(|e| e.to_string())?
+        .into_runnable()
+        .map_err(|e| e.to_string())?;
+
+    let img = image::ImageReader::open(src_path)
+        .map_err(|e| e.to_string())?
+        .decode()
+        .map_err(|e| e.to_string())?;
+    let (orig_w, orig_h) = img.dimensions();
+    let resized = img.resize_exact(320, 320, image::imageops::FilterType::Lanczos3);
+    let rgb = resized.to_rgb8();
+
+    const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
+    const STD: [f32; 3] = [0.229, 0.224, 0.225];
+
+    let mut data = vec![0f32; 3 * 320 * 320];
+    for y in 0..320usize {
+        for x in 0..320usize {
+            let p = rgb.get_pixel(x as u32, y as u32);
+            for c in 0..3 {
+                let v = p[c] as f32 / 255.0;
+                data[c * 320 * 320 + y * 320 + x] = (v - MEAN[c]) / STD[c];
+            }
+        }
+    }
+
+    let input: Tensor =
+        tract_ndarray::Array4::<f32>::from_shape_vec((1, 3, 320, 320), data)
+            .map_err(|e| e.to_string())?
+            .into();
+
+    let outputs = model.run(tvec![input.into()]).map_err(|e| e.to_string())?;
+    let mask = outputs[0].to_array_view::<f32>().map_err(|e| e.to_string())?;
+    let mask_flat: Vec<f32> = mask.iter().copied().collect();
+
+    let min = mask_flat.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max = mask_flat.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let range = (max - min).max(1e-6);
+
+    let mut mask_img = image::GrayImage::new(320, 320);
+    for y in 0..320u32 {
+        for x in 0..320u32 {
+            let idx = (y * 320 + x) as usize;
+            let a = ((mask_flat[idx] - min) / range * 255.0).clamp(0.0, 255.0) as u8;
+            mask_img.put_pixel(x, y, image::Luma([a]));
+        }
+    }
+
+    let mask_full =
+        image::imageops::resize(&mask_img, orig_w, orig_h, image::imageops::FilterType::Lanczos3);
+    let orig_rgba = img.to_rgba8();
+    let mut out = RgbaImage::new(orig_w, orig_h);
+    for y in 0..orig_h {
+        for x in 0..orig_w {
+            let mut px = *orig_rgba.get_pixel(x, y);
+            px[3] = mask_full.get_pixel(x, y)[0];
+            out.put_pixel(x, y, px);
+        }
+    }
+
+    let mut buf = std::io::Cursor::new(Vec::new());
+    out.write_to(&mut buf, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    Ok(buf.into_inner())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -285,6 +425,9 @@ pub fn run() {
             download_image_to_temp,
             save_image_file,
             remove_background_api,
+            get_bg_model_status,
+            download_bg_model,
+            remove_background_local,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

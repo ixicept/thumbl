@@ -421,7 +421,8 @@ function TransformProps({
 
 const API_KEY_STORAGE = "thumbl_rmbg_api_key";
 
-type BgPhase = "idle" | "processing" | "error";
+type LocalPhase = "checking" | "not_downloaded" | "downloading" | "ready" | "processing" | "error";
+type ApiPhase = "idle" | "processing" | "error";
 
 function ImageToolsProps({
   layer,
@@ -430,75 +431,137 @@ function ImageToolsProps({
   layer: ImageLayer;
   set: (c: LayerChanges) => void;
 }) {
-  const [phase, setPhase] = useState<BgPhase>("idle");
-  const [errMsg, setErrMsg] = useState("");
+  const [localPhase, setLocalPhase] = useState<LocalPhase>("checking");
+  const [localErr, setLocalErr] = useState("");
+  const [apiPhase, setApiPhase] = useState<ApiPhase>("idle");
+  const [apiErr, setApiErr] = useState("");
   const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE) ?? "");
+
+  useEffect(() => {
+    invoke<boolean>("get_bg_model_status")
+      .then((ready) => setLocalPhase(ready ? "ready" : "not_downloaded"))
+      .catch(() => setLocalPhase("not_downloaded"));
+  }, []);
+
+  async function handleDownload() {
+    setLocalPhase("downloading");
+    try {
+      await invoke("download_bg_model");
+      setLocalPhase("ready");
+    } catch (e) {
+      setLocalErr(String(e));
+      setLocalPhase("error");
+    }
+  }
+
+  async function handleLocalRemove() {
+    setLocalPhase("processing");
+    try {
+      const newPath = await invoke<string>("remove_background_local", { srcPath: layer.src });
+      set({ src: newPath });
+      setLocalPhase("ready");
+    } catch (e) {
+      setLocalErr(String(e));
+      setLocalPhase("error");
+    }
+  }
 
   function saveKey(k: string) {
     setApiKey(k);
     localStorage.setItem(API_KEY_STORAGE, k);
   }
 
-  async function handleRemove() {
+  async function handleApiRemove() {
     if (!apiKey.trim()) {
-      setErrMsg("Enter a remove.bg API key first.");
-      setPhase("error");
+      setApiErr("Enter a remove.bg API key first.");
+      setApiPhase("error");
       return;
     }
-    setPhase("processing");
+    setApiPhase("processing");
     try {
       const newPath = await invoke<string>("remove_background_api", {
         srcPath: layer.src,
         apiKey: apiKey.trim(),
       });
       set({ src: newPath });
-      setPhase("idle");
+      setApiPhase("idle");
     } catch (e) {
-      setErrMsg(String(e));
-      setPhase("error");
+      setApiErr(String(e));
+      setApiPhase("error");
     }
   }
 
   return (
-    <Section title="AI Tools">
-      <div className="prop-bg-remove">
-        <PropRow label="API Key">
-          <input
-            type="password"
-            className="prop-api-key-input"
-            placeholder="remove.bg key"
-            value={apiKey}
-            onChange={(e) => saveKey(e.target.value)}
-          />
-        </PropRow>
-        <p className="prop-note">
-          Free at{" "}
-          <a
-            className="prop-link"
-            href="https://www.remove.bg/api"
-            target="_blank"
-            rel="noreferrer"
-          >
-            remove.bg
-          </a>{" "}
-          (50 credits/month)
-        </p>
-        {phase === "processing" ? (
-          <p className="prop-note">Removing background...</p>
-        ) : (
-          <button
-            className="prop-action-btn"
-            disabled={!apiKey.trim()}
-            onClick={() => void handleRemove()}
-          >
-            Remove Background
-          </button>
-        )}
-        {phase === "error" && (
-          <p className="prop-note prop-error">{errMsg}</p>
-        )}
-      </div>
-    </Section>
+    <>
+      <Section title="Local AI (Free)">
+        <div className="prop-bg-remove">
+          {localPhase === "checking" && (
+            <p className="prop-note">Checking model...</p>
+          )}
+          {localPhase === "not_downloaded" && (
+            <>
+              <p className="prop-note">u2net model not downloaded yet (~176 MB).</p>
+              <button className="prop-action-btn" onClick={() => void handleDownload()}>
+                Download Model
+              </button>
+            </>
+          )}
+          {localPhase === "downloading" && (
+            <p className="prop-note">Downloading model (~176 MB)...</p>
+          )}
+          {localPhase === "ready" && (
+            <button className="prop-action-btn" onClick={() => void handleLocalRemove()}>
+              Remove Background (Local)
+            </button>
+          )}
+          {localPhase === "processing" && (
+            <p className="prop-note">Processing... (may take a few seconds)</p>
+          )}
+          {localPhase === "error" && (
+            <>
+              <p className="prop-note prop-error">{localErr}</p>
+              <button className="prop-action-btn" onClick={() => setLocalPhase("not_downloaded")}>
+                Retry
+              </button>
+            </>
+          )}
+        </div>
+      </Section>
+      <Section title="remove.bg API">
+        <div className="prop-bg-remove">
+          <PropRow label="API Key">
+            <input
+              type="password"
+              className="prop-api-key-input"
+              placeholder="remove.bg key"
+              value={apiKey}
+              onChange={(e) => saveKey(e.target.value)}
+            />
+          </PropRow>
+          <p className="prop-note">
+            Free at{" "}
+            <a className="prop-link" href="https://www.remove.bg/api" target="_blank" rel="noreferrer">
+              remove.bg
+            </a>{" "}
+            (50 credits/month)
+          </p>
+          {apiPhase === "processing" ? (
+            <p className="prop-note">Removing background...</p>
+          ) : (
+            <button
+              className="prop-action-btn"
+              disabled={!apiKey.trim()}
+              onClick={() => void handleApiRemove()}
+            >
+              Remove Background
+            </button>
+          )}
+          {apiPhase === "error" && (
+            <p className="prop-note prop-error">{apiErr}</p>
+          )}
+        </div>
+      </Section>
+    </>
   );
 }
 

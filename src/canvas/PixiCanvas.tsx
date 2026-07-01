@@ -174,6 +174,7 @@ export function PixiCanvas({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  const [stageReady, setStageReady] = useState(false);
 
   layersRef.current = layers;
   onLayerChangeRef.current = onLayerChange;
@@ -268,6 +269,7 @@ export function PixiCanvas({
         });
         app.stage.addChild(stage);
         stageRef.current = stage;
+        setStageReady(true);
       });
 
     return () => {
@@ -287,6 +289,21 @@ export function PixiCanvas({
     if (app) {
       app.renderer.resize(canvasWidth, canvasHeight);
     }
+  }, [canvasWidth, canvasHeight]);
+
+  // Auto-fit zoom whenever a new canvas is loaded
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const vw = viewport.clientWidth;
+    const vh = viewport.clientHeight;
+    if (vw === 0 || vh === 0) return;
+    const fitZoom = Math.min(
+      (vw * 0.85) / canvasWidth,
+      (vh * 0.85) / canvasHeight
+    );
+    setZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, fitZoom)));
+    setPan({ x: 0, y: 0 });
   }, [canvasWidth, canvasHeight]);
 
   useEffect(() => {
@@ -494,7 +511,7 @@ export function PixiCanvas({
     return () => {
       cancelled = true;
     };
-  }, [layers, selectedId, canvasWidth, canvasHeight]);
+  }, [layers, selectedId, canvasWidth, canvasHeight, stageReady]);
 
   return (
     <div ref={viewportRef} className="pixi-canvas-viewport">

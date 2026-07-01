@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useHistory } from "./useHistory";
 import { save } from "@tauri-apps/plugin-dialog";
 import { Assets } from "pixi.js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -35,7 +36,9 @@ function basename(path: string): string {
 }
 
 function App() {
-  const [project, setProject] = useState<Project | null>(null);
+  const { project, setProject, setProjectSilent, pushSnapshot, resetProject, undo, redo, canUndo, canRedo } = useHistory<Project>();
+  const preChangeRef = useRef<Project | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [showNewCanvasDialog, setShowNewCanvasDialog] = useState(false);
@@ -54,16 +57,23 @@ function App() {
   const selectedLayer = project?.layers.find((l) => l.id === selectedId) ?? null;
 
   function updateLayer(id: string, changes: LayerChanges) {
-    setProject((p) =>
-      p
-        ? {
-            ...p,
-            layers: p.layers.map((l) =>
-              l.id === id ? ({ ...l, ...changes } as Layer) : l
-            ),
-          }
-        : p
+    // Capture snapshot before the first change in this drag/edit session
+    if (preChangeRef.current === null && project !== null) {
+      preChangeRef.current = project;
+    }
+    // Update canvas immediately without pushing to history
+    setProjectSilent((p) =>
+      p ? { ...p, layers: p.layers.map((l) => l.id === id ? ({ ...l, ...changes } as Layer) : l) } : p
     );
+    // Commit the pre-change snapshot to history 600 ms after the last update
+    if (debounceRef.current !== null) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      if (preChangeRef.current !== null) {
+        pushSnapshot(preChangeRef.current);
+        preChangeRef.current = null;
+      }
+    }, 600);
   }
 
   function reorderLayer(fromIndex: number, toIndex: number) {
@@ -117,7 +127,7 @@ function App() {
       blendMode: "normal",
       color: "#ffffff",
     };
-    setProject({
+    resetProject({
       version: 2,
       canvasWidth: width,
       canvasHeight: height,
@@ -265,7 +275,7 @@ function App() {
   async function handleOpen() {
     const result = await openProject();
     if (result) {
-      setProject(result.project);
+      resetProject(result.project);
       setFilePath(result.path);
       setSelectedId(null);
     }
@@ -316,6 +326,12 @@ function App() {
       } else if (e.key === "e") {
         e.preventDefault();
         if (project) setShowExportDialog(true);
+      } else if (e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if (e.key === "y" || (e.key === "z" && e.shiftKey)) {
+        e.preventDefault();
+        redo();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -368,6 +384,8 @@ function App() {
           {
             label: "Edit",
             items: [
+              { label: "Undo", shortcut: "Ctrl+Z", onClick: undo, disabled: !canUndo },
+              { label: "Redo", shortcut: "Ctrl+Y", onClick: redo, disabled: !canRedo },
               {
                 label: "Delete Layer",
                 onClick: deleteSelectedLayer,

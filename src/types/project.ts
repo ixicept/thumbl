@@ -13,11 +13,34 @@ export type BlendMode =
   | "difference"
   | "exclusion";
 
+export interface ColorAdjustments {
+  brightness: number;          // 0 to 2, default 1
+  contrast: number;            // 0 to 2, default 1
+  saturation: number;          // 0 to 2, default 1
+  hue: number;                 // -180 to 180, default 0
+  temperature: number;         // -100 to 100, default 0 (warm/cool)
+  shadows: [number, number];   // color wheel [x,y] -1 to 1, default [0,0]
+  midtones: [number, number];  // color wheel [x,y] -1 to 1, default [0,0]
+  highlights: [number, number];// color wheel [x,y] -1 to 1, default [0,0]
+}
+
+export const DEFAULT_COLOR_ADJUSTMENTS: ColorAdjustments = {
+  brightness: 1,
+  contrast: 1,
+  saturation: 1,
+  hue: 0,
+  temperature: 0,
+  shadows: [0, 0],
+  midtones: [0, 0],
+  highlights: [0, 0],
+};
+
 export interface BaseLayer {
   id: string;
   name: string;
   visible: boolean;
   blendMode: BlendMode;
+  colorAdjustments?: ColorAdjustments;
 }
 
 export interface ImageLayer extends BaseLayer {
@@ -104,11 +127,13 @@ export interface Project {
   canvasHeight: number;
   /** Stacking order: index 0 = bottom (back), last index = top (front). */
   layers: Layer[];
+  globalAdjustments: ColorAdjustments;
 }
 
 export function normalizeProject(project: Project): Project {
   return {
     ...project,
+    globalAdjustments: project.globalAdjustments ?? { ...DEFAULT_COLOR_ADJUSTMENTS },
     layers: project.layers.map((layer, index) => ({
       ...layer,
       name: layer.name ?? `Layer ${index + 1}`,

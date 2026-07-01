@@ -1,32 +1,36 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
+  ColorAdjustments,
   Layer,
   LayerChanges,
   TextDropShadow,
   TextLayer,
   TextStroke,
 } from "../types/project";
+import { DEFAULT_COLOR_ADJUSTMENTS } from "../types/project";
 import { variantsFor, type FontFamily } from "../fonts";
 import "./PropertiesPanel.css";
 
 interface PropertiesPanelProps {
-  layer: Layer;
+  layer: Layer | null;
   fonts: FontFamily[];
   canvasWidth: number;
   canvasHeight: number;
+  globalAdjustments: ColorAdjustments;
   onChange: (id: string, changes: LayerChanges) => void;
+  onGlobalChange: (adj: ColorAdjustments) => void;
 }
 
 function tabsFor(layer: Layer): string[] {
   switch (layer.type) {
     case "text":
-      return ["Text", "Transform"];
+      return ["Text", "Color", "Transform"];
     case "shape":
-      return ["Shape", "Transform"];
+      return ["Shape", "Color", "Transform"];
     case "image":
-      return ["Transform"];
+      return ["Color", "Transform"];
     case "fill":
-      return ["Fill"];
+      return ["Fill", "Color"];
   }
 }
 
@@ -35,10 +39,21 @@ export function PropertiesPanel({
   fonts,
   canvasWidth,
   canvasHeight,
+  globalAdjustments,
   onChange,
+  onGlobalChange,
 }: PropertiesPanelProps) {
-  const [activeTab, setActiveTab] = useState("Text");
-  const set = (changes: LayerChanges) => onChange(layer.id, changes);
+  const [activeTab, setActiveTab] = useState("Color");
+  const set = layer ? (changes: LayerChanges) => onChange(layer.id, changes) : null;
+
+  if (!layer) {
+    return (
+      <div className="properties-panel-content">
+        <div className="prop-panel-title">Global Color</div>
+        <ColorProps adj={globalAdjustments} onChange={onGlobalChange} />
+      </div>
+    );
+  }
 
   const tabs = tabsFor(layer);
   const tab = tabs.includes(activeTab) ? activeTab : tabs[0];
@@ -59,16 +74,22 @@ export function PropertiesPanel({
 
       <div className="prop-tab-body">
         {tab === "Text" && layer.type === "text" && (
-          <TextProps layer={layer} fonts={fonts} set={set} />
+          <TextProps layer={layer} fonts={fonts} set={set!} />
         )}
         {tab === "Shape" && layer.type === "shape" && (
-          <ShapeStyleProps layer={layer} set={set} />
+          <ShapeStyleProps layer={layer} set={set!} />
         )}
         {tab === "Fill" && layer.type === "fill" && (
-          <ColorRow label="Color" value={layer.color} onChange={(v) => set({ color: v })} />
+          <ColorRow label="Color" value={layer.color} onChange={(v) => set!({ color: v })} />
+        )}
+        {tab === "Color" && (
+          <ColorProps
+            adj={layer.colorAdjustments ?? { ...DEFAULT_COLOR_ADJUSTMENTS }}
+            onChange={(adj) => set!({ colorAdjustments: adj })}
+          />
         )}
         {tab === "Transform" && (
-          <TransformProps layer={layer} canvasWidth={canvasWidth} canvasHeight={canvasHeight} set={set} />
+          <TransformProps layer={layer} canvasWidth={canvasWidth} canvasHeight={canvasHeight} set={set!} />
         )}
       </div>
     </div>
@@ -166,7 +187,7 @@ function ColorRow({
       const result = await new EyeDropper().open();
       onChange(result.sRGBHex);
     } catch {
-      // user cancelled the pick
+      // user cancelled
     }
   }
 
@@ -190,7 +211,140 @@ function num(value: string): number {
 const radToDeg = (r: number) => Math.round((r * 180) / Math.PI);
 const degToRad = (d: number) => (d * Math.PI) / 180;
 
-// --- Transform tab (box treatment) ---
+// --- Color tab ---
+
+const WHEEL_SIZE = 72;
+const WHEEL_R = WHEEL_SIZE / 2 - 1;
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  };
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+
+function ColorWheel({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: [number, number];
+  onChange: (v: [number, number]) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dragging = useRef(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const size = WHEEL_SIZE;
+    const cx = size / 2;
+    const cy = size / 2;
+    const imageData = ctx.createImageData(size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const dx = (x - cx) / WHEEL_R;
+        const dy = (y - cy) / WHEEL_R;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const i = (y * size + x) * 4;
+        if (dist > 1) {
+          imageData.data[i + 3] = 0;
+          continue;
+        }
+        const hue = ((Math.atan2(dy, dx) / (Math.PI * 2)) * 360 + 360) % 360;
+        const [r, g, b] = hslToRgb(hue, dist, 0.5);
+        imageData.data[i] = r;
+        imageData.data[i + 1] = g;
+        imageData.data[i + 2] = b;
+        imageData.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
+  }, []);
+
+  const cx = WHEEL_SIZE / 2;
+  const cy = WHEEL_SIZE / 2;
+  const dotX = cx + value[0] * WHEEL_R;
+  const dotY = cy + value[1] * WHEEL_R;
+
+  function pick(clientX: number, clientY: number, rect: DOMRect) {
+    const x = clientX - rect.left - cx;
+    const y = clientY - rect.top - cy;
+    const dist = Math.sqrt(x * x + y * y);
+    const clamped = Math.min(dist, WHEEL_R);
+    const angle = Math.atan2(y, x);
+    onChange([
+      (Math.cos(angle) * clamped) / WHEEL_R,
+      (Math.sin(angle) * clamped) / WHEEL_R,
+    ]);
+  }
+
+  return (
+    <div className="color-wheel-item">
+      <div
+        className="color-wheel-wrap"
+        onMouseDown={(e) => {
+          dragging.current = true;
+          pick(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
+        }}
+        onMouseMove={(e) => {
+          if (!dragging.current) return;
+          pick(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
+        }}
+        onMouseUp={() => { dragging.current = false; }}
+        onMouseLeave={() => { dragging.current = false; }}
+      >
+        <canvas ref={canvasRef} width={WHEEL_SIZE} height={WHEEL_SIZE} />
+        <div className="color-wheel-dot" style={{ left: dotX - 4, top: dotY - 4 }} />
+      </div>
+      <button
+        type="button"
+        className="color-wheel-reset"
+        title="Reset"
+        onClick={() => onChange([0, 0])}
+      >
+        ↺
+      </button>
+      <span className="color-wheel-label">{label}</span>
+    </div>
+  );
+}
+
+function ColorProps({
+  adj,
+  onChange,
+}: {
+  adj: ColorAdjustments;
+  onChange: (adj: ColorAdjustments) => void;
+}) {
+  const set = (partial: Partial<ColorAdjustments>) => onChange({ ...adj, ...partial });
+
+  return (
+    <>
+      <Section title="Basic">
+        <SliderRow label="Brightness" value={adj.brightness} min={0} max={2} step={0.01} onChange={(v) => set({ brightness: v })} />
+        <SliderRow label="Contrast" value={adj.contrast} min={0} max={2} step={0.01} onChange={(v) => set({ contrast: v })} />
+        <SliderRow label="Saturation" value={adj.saturation} min={0} max={2} step={0.01} onChange={(v) => set({ saturation: v })} />
+        <SliderRow label="Hue" value={adj.hue} min={-180} max={180} onChange={(v) => set({ hue: v })} />
+        <SliderRow label="Temperature" value={adj.temperature} min={-100} max={100} onChange={(v) => set({ temperature: v })} />
+      </Section>
+      <Section title="Color Wheels">
+        <div className="color-wheels-row">
+          <ColorWheel label="Shadows" value={adj.shadows} onChange={(v) => set({ shadows: v })} />
+          <ColorWheel label="Midtones" value={adj.midtones} onChange={(v) => set({ midtones: v })} />
+          <ColorWheel label="Highlights" value={adj.highlights} onChange={(v) => set({ highlights: v })} />
+        </div>
+      </Section>
+    </>
+  );
+}
+
+// --- Transform tab ---
 
 function TransformProps({
   layer,
@@ -222,7 +376,6 @@ function TransformProps({
     );
   }
 
-  // box-style: image, rect/ellipse, text
   const x = layer.type === "text" ? layer.x : (layer as { x?: number }).x ?? 0;
   const y = layer.type === "text" ? layer.y : (layer as { y?: number }).y ?? 0;
   const rotation = layer.type === "text" ? layer.rotation : (layer as { rotation?: number }).rotation ?? 0;
@@ -354,7 +507,7 @@ function TextProps({
       {stroke && (
         <>
           <ColorRow label="Outline Color" value={stroke.color} onChange={(v) => updateStroke({ color: v })} />
-          <SliderRow label="Outline Width" value={stroke.width} min={0} max={50} onChange={(v) => updateStroke({ width: v })} />
+          <SliderRow label="Outline W" value={stroke.width} min={0} max={50} onChange={(v) => updateStroke({ width: v })} />
         </>
       )}
 

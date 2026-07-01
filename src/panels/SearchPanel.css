@@ -1,0 +1,166 @@
+.search-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.search-url-row {
+  padding: 0.4em 0.5em 0.2em;
+  flex-shrink: 0;
+}
+
+.search-url-input {
+  width: 100%;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #777;
+  font-size: 0.72em;
+  padding: 0.3em 0.4em;
+  font-family: inherit;
+}
+
+.search-url-input:focus {
+  outline: none;
+  border-color: #555;
+  color: #ccc;
+}
+
+.search-query-row {
+  display: flex;
+  gap: 0.3em;
+  padding: 0.2em 0.5em 0.4em;
+  flex-shrink: 0;
+}
+
+.search-query-input {
+  flex: 1;
+  min-width: 0;
+  background: #1f1f1f;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #f0f0f0;
+  font-size: 0.82em;
+  padding: 0.35em 0.4em;
+  font-family: inherit;
+}
+
+.search-query-input:focus {
+  outline: none;
+  border-color: #4f9eff;
+}
+
+.search-go-btn {
+  background: #1e3a5f;
+  border: 1px solid #2a5a9f;
+  border-radius: 4px;
+  color: #f0f0f0;
+  font-size: 0.82em;
+  padding: 0.35em 0.65em;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.search-go-btn:hover:not(:disabled) {
+  background: #2a4a7f;
+}
+
+.search-go-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.search-error {
+  padding: 0.25em 0.5em;
+  font-size: 0.78em;
+  color: #e06060;
+  flex-shrink: 0;
+}
+
+.search-results {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 3px;
+  padding: 3px;
+  align-content: start;
+}
+
+.search-thumb {
+  position: relative;
+  height: 120px;
+  overflow: hidden;
+  background: #1a1a1a;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: block;
+}
+
+.search-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: opacity 0.1s;
+}
+
+.search-thumb:hover img {
+  opacity: 0.75;
+}
+
+.search-thumb:disabled {
+  cursor: default;
+}
+
+.search-thumb-busy img,
+.search-thumb-busy .search-thumb-failed {
+  opacity: 0.4;
+}
+
+.search-thumb-spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6em;
+  color: white;
+  pointer-events: none;
+}
+
+.search-thumb-loading {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, #1a1a1a 25%, #282828 50%, #1a1a1a 75%);
+  background-size: 200% 100%;
+  animation: thumb-shimmer 1.4s infinite;
+}
+
+@keyframes thumb-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.search-thumb-failed {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1a1a;
+  padding: 0.3em;
+}
+
+.search-thumb-failed span {
+  font-size: 0.7em;
+  color: #555;
+  text-align: center;
+  line-height: 1.3;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}

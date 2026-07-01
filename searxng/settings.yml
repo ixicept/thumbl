@@ -1,0 +1,16 @@
+# SearXNG settings for Thumbl
+# Uses default engine settings — only overrides what we need.
+use_default_settings: true
+
+server:
+  # Change this to any long random string in production
+  secret_key: "thumbl-searxng-change-this-secret"
+  # Disable rate limiter so the desktop app isn't blocked
+  limiter: false
+  # Proxy thumbnails through SearXNG so images load reliably
+  image_proxy: true
+
+search:
+  formats:
+    - html
+    - json

@@ -79,6 +79,13 @@ body,
   border-color: #4f9eff;
 }
 
+.main-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .workspace {
   flex: 1;
   display: flex;
@@ -91,6 +98,24 @@ body,
   background-color: #252525;
   border-right: 1px solid #3a3a3a;
   overflow-y: auto;
+}
+
+.browser-resize-handle {
+  height: 4px;
+  background: #2a2a2a;
+  border-top: 1px solid #3a3a3a;
+  cursor: ns-resize;
+  flex-shrink: 0;
+}
+
+.browser-resize-handle:hover {
+  background: #3a3a3a;
+}
+
+.browser-panel-wrap {
+  flex-shrink: 0;
+  border-top: 1px solid #3a3a3a;
+  overflow: hidden;
 }
 
 .properties-panel {

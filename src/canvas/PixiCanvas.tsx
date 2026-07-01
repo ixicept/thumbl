@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Application,
   Assets,
+  ColorMatrixFilter,
   Container,
   Graphics,
   Sprite,
@@ -10,7 +11,8 @@ import {
 } from "pixi.js";
 import "pixi.js/advanced-blend-modes";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Layer, LayerChanges } from "../types/project";
+import type { ColorAdjustments, Layer, LayerChanges } from "../types/project";
+import { DEFAULT_COLOR_ADJUSTMENTS } from "../types/project";
 
 const HANDLE_SIZE = 10;
 const ENDPOINT_RADIUS = 6;
@@ -136,11 +138,79 @@ function cacheKeyFor(layer: Layer): string {
   }
 }
 
+// --- Color filter helpers ---
+
+function isDefaultAdj(adj: ColorAdjustments): boolean {
+  const d = DEFAULT_COLOR_ADJUSTMENTS;
+  return (
+    adj.brightness === d.brightness &&
+    adj.contrast === d.contrast &&
+    adj.saturation === d.saturation &&
+    adj.hue === d.hue &&
+    adj.temperature === d.temperature &&
+    adj.shadows[0] === 0 && adj.shadows[1] === 0 &&
+    adj.midtones[0] === 0 && adj.midtones[1] === 0 &&
+    adj.highlights[0] === 0 && adj.highlights[1] === 0
+  );
+}
+
+function wheelToRGB([wx, wy]: [number, number]): [number, number, number] {
+  const dist = Math.sqrt(wx * wx + wy * wy);
+  if (dist < 0.001) return [0, 0, 0];
+  const a = Math.atan2(wy, wx);
+  const r = ((Math.cos(a) + 1) / 2 - 0.5) * 2 * dist;
+  const g = ((Math.cos(a - (2 * Math.PI) / 3) + 1) / 2 - 0.5) * 2 * dist;
+  const b = ((Math.cos(a + (2 * Math.PI) / 3) + 1) / 2 - 0.5) * 2 * dist;
+  return [r, g, b];
+}
+
+function buildColorFilter(adj: ColorAdjustments): ColorMatrixFilter | null {
+  if (isDefaultAdj(adj)) return null;
+  const f = new ColorMatrixFilter();
+  f.brightness(adj.brightness, false);
+  if (adj.contrast !== 1) f.contrast(adj.contrast - 1, true);
+  if (adj.saturation !== 1) f.saturate(adj.saturation - 1, true);
+  if (adj.hue !== 0) f.hue(adj.hue, true);
+
+  // Copy matrix so setter is called (ensures GPU uniform update)
+  const m = Array.from(f.matrix) as number[];
+
+  // Temperature: warm = +R -B, cool = -R +B
+  const t = adj.temperature / 300;
+  m[4] += t;
+  m[14] -= t;
+
+  // Shadows lift (add constant offset — affects darks most)
+  const [sr, sg, sb] = wheelToRGB(adj.shadows);
+  m[4] += sr * 0.25;
+  m[9] += sg * 0.25;
+  m[14] += sb * 0.25;
+
+  // Highlights gain (multiply diagonal — affects brights most)
+  const [hr, hg, hb] = wheelToRGB(adj.highlights);
+  m[0] *= 1 + hr * 0.4;
+  m[6] *= 1 + hg * 0.4;
+  m[12] *= 1 + hb * 0.4;
+
+  // Midtones (blend of lift and gain)
+  const [mr, mg, mb] = wheelToRGB(adj.midtones);
+  m[4] += mr * 0.12;
+  m[9] += mg * 0.12;
+  m[14] += mb * 0.12;
+  m[0] *= 1 + mr * 0.2;
+  m[6] *= 1 + mg * 0.2;
+  m[12] *= 1 + mb * 0.2;
+
+  f.matrix = m as typeof f.matrix;
+  return f;
+}
+
 interface PixiCanvasProps {
   canvasWidth: number;
   canvasHeight: number;
   layers: Layer[];
   selectedId: string | null;
+  globalAdjustments: ColorAdjustments;
   onSelect: (id: string | null) => void;
   onLayerChange: (id: string, changes: LayerChanges) => void;
 }
@@ -160,6 +230,7 @@ export function PixiCanvas({
   canvasHeight,
   layers,
   selectedId,
+  globalAdjustments,
   onSelect,
   onLayerChange,
 }: PixiCanvasProps) {
@@ -306,6 +377,14 @@ export function PixiCanvas({
     setPan({ x: 0, y: 0 });
   }, [canvasWidth, canvasHeight]);
 
+  // Global color grade applied to the whole stage
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const f = buildColorFilter(globalAdjustments);
+    stage.filters = f ? [f] : [];
+  }, [globalAdjustments, stageReady]);
+
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -394,6 +473,11 @@ export function PixiCanvas({
 
         entry.container.visible = layer.visible;
         entry.content.blendMode = layer.blendMode;
+
+        // Per-layer color filter (applied to content only, not handles/outline)
+        const layerAdj = layer.colorAdjustments;
+        const layerFilter = layerAdj ? buildColorFilter(layerAdj) : null;
+        entry.content.filters = layerFilter ? [layerFilter] : [];
 
         // --- content geometry / styling ---
         if (layer.type === "image") {

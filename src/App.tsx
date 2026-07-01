@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Assets } from "pixi.js";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PixiCanvas } from "./canvas/PixiCanvas";
 import { LayersPanel } from "./panels/LayersPanel";
 import { PropertiesPanel } from "./panels/PropertiesPanel";
+import { BrowserPanel } from "./panels/BrowserPanel";
 import { MenuBar } from "./menu/MenuBar";
 import { NewCanvasDialog } from "./dialogs/NewCanvasDialog";
 import { loadFonts, type FontFamily } from "./fonts";
@@ -16,11 +17,13 @@ import {
 } from "./project/io";
 import type {
   BlendMode,
+  ColorAdjustments,
   Layer,
   LayerChanges,
   Project,
   ShapeKind,
 } from "./types/project";
+import { DEFAULT_COLOR_ADJUSTMENTS } from "./types/project";
 import "./App.css";
 
 function basename(path: string): string {
@@ -34,6 +37,9 @@ function App() {
   const [filePath, setFilePath] = useState<string | null>(null);
   const [showNewCanvasDialog, setShowNewCanvasDialog] = useState(false);
   const [fonts, setFonts] = useState<FontFamily[]>([]);
+  const [showBrowser, setShowBrowser] = useState(false);
+  const [browserHeight, setBrowserHeight] = useState(260);
+  const isResizingBrowser = useRef(false);
 
   useEffect(() => {
     void loadFonts().then(setFonts);
@@ -92,6 +98,10 @@ function App() {
     updateLayer(id, { color });
   }
 
+  function updateGlobalAdjustments(adj: ColorAdjustments) {
+    setProject((p) => (p ? { ...p, globalAdjustments: adj } : p));
+  }
+
   function handleNewCanvas(width: number, height: number) {
     const background: Layer = {
       id: crypto.randomUUID(),
@@ -106,17 +116,15 @@ function App() {
       canvasWidth: width,
       canvasHeight: height,
       layers: [background],
+      globalAdjustments: { ...DEFAULT_COLOR_ADJUSTMENTS },
     });
     setSelectedId(null);
     setFilePath(null);
     setShowNewCanvasDialog(false);
   }
 
-  async function handleImportImage() {
+  async function addImageFromPath(path: string) {
     if (!project) return;
-    const path = await pickImagePath();
-    if (!path) return;
-
     const texture = await Assets.load(convertFileSrc(path));
     const id = crypto.randomUUID();
     const layer: Layer = {
@@ -134,6 +142,12 @@ function App() {
     };
     setProject((p) => (p ? { ...p, layers: [...p.layers, layer] } : p));
     setSelectedId(id);
+  }
+
+  async function handleImportImage() {
+    if (!project) return;
+    const path = await pickImagePath();
+    if (path) await addImageFromPath(path);
   }
 
   function addLayer(layer: Layer) {
@@ -254,6 +268,9 @@ function App() {
       } else if (e.key === "t") {
         e.preventDefault();
         addTextLayer();
+      } else if (e.key === "b") {
+        e.preventDefault();
+        setShowBrowser((v) => !v);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -313,6 +330,16 @@ function App() {
             ],
           },
           {
+            label: "View",
+            items: [
+              {
+                label: showBrowser ? "Hide Browser" : "Show Browser",
+                shortcut: "Ctrl+B",
+                onClick: () => setShowBrowser((v) => !v),
+              },
+            ],
+          },
+          {
             label: "Insert",
             items: [
               { label: "Text", shortcut: "Ctrl+T", onClick: addTextLayer, disabled: !project },
@@ -325,6 +352,7 @@ function App() {
         ]}
       />
       {project ? (
+        <div className="main-area">
         <div className="workspace">
           <aside className="layers-panel">
             <LayersPanel
@@ -345,23 +373,54 @@ function App() {
               canvasHeight={project.canvasHeight}
               layers={project.layers}
               selectedId={selectedId}
+              globalAdjustments={project.globalAdjustments}
               onSelect={setSelectedId}
               onLayerChange={updateLayer}
             />
           </div>
           <aside className="properties-panel">
-            {selectedLayer ? (
-              <PropertiesPanel
-                layer={selectedLayer}
-                fonts={fonts}
-                canvasWidth={project.canvasWidth}
-                canvasHeight={project.canvasHeight}
-                onChange={updateLayer}
-              />
-            ) : (
-              <p className="properties-panel-empty">No layer selected</p>
-            )}
+            <PropertiesPanel
+              layer={selectedLayer}
+              fonts={fonts}
+              canvasWidth={project.canvasWidth}
+              canvasHeight={project.canvasHeight}
+              globalAdjustments={project.globalAdjustments}
+              onChange={updateLayer}
+              onGlobalChange={updateGlobalAdjustments}
+            />
           </aside>
+        </div>
+
+        {showBrowser && (
+          <>
+            <div
+              className="browser-resize-handle"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                isResizingBrowser.current = true;
+                const startY = e.clientY;
+                const startH = browserHeight;
+                const onMove = (ev: MouseEvent) => {
+                  if (!isResizingBrowser.current) return;
+                  const delta = startY - ev.clientY;
+                  setBrowserHeight(Math.max(120, Math.min(700, startH + delta)));
+                };
+                const onUp = () => {
+                  isResizingBrowser.current = false;
+                  window.removeEventListener("mousemove", onMove);
+                  window.removeEventListener("mouseup", onUp);
+                };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+              }}
+            />
+            <div className="browser-panel-wrap" style={{ height: browserHeight }}>
+              <BrowserPanel
+                onImport={(path) => void addImageFromPath(path)}
+              />
+            </div>
+          </>
+        )}
         </div>
       ) : (
         <div className="empty-state">

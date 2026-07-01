@@ -10,6 +10,7 @@ import { BrowserPanel } from "./panels/BrowserPanel";
 import { MenuBar } from "./menu/MenuBar";
 import { NewCanvasDialog } from "./dialogs/NewCanvasDialog";
 import { ExportDialog } from "./dialogs/ExportDialog";
+import { EmojiPicker } from "./dialogs/EmojiPicker";
 import { loadFonts, type FontFamily } from "./fonts";
 import {
   openProject,
@@ -42,6 +43,7 @@ function App() {
   const [showBrowser, setShowBrowser] = useState(false);
   const [browserHeight, setBrowserHeight] = useState(260);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const isResizingBrowser = useRef(false);
   const canvasRef = useRef<PixiCanvasHandle>(null);
 
@@ -157,6 +159,12 @@ function App() {
     if (!project) return;
     const path = await pickImagePath();
     if (path) await addImageFromPath(path);
+  }
+
+  async function handleEmojiPick(_emoji: string, twemojiUrl: string) {
+    setShowEmojiPicker(false);
+    const path = await invoke<string>("download_image_to_temp", { url: twemojiUrl });
+    await addImageFromPath(path);
   }
 
   function addLayer(layer: Layer) {
@@ -390,6 +398,7 @@ function App() {
               { label: "Ellipse", onClick: () => addShapeLayer("ellipse"), disabled: !project },
               { label: "Line", onClick: () => addShapeLayer("line"), disabled: !project },
               { label: "Arrow", onClick: () => addShapeLayer("arrow"), disabled: !project },
+              { label: "Emoji...", onClick: () => setShowEmojiPicker(true), disabled: !project },
             ],
           },
         ]}
@@ -485,6 +494,12 @@ function App() {
           canvasHeight={project.canvasHeight}
           onExport={(fmt, q) => void handleExport(fmt, q)}
           onCancel={() => setShowExportDialog(false)}
+        />
+      )}
+      {showEmojiPicker && (
+        <EmojiPicker
+          onPick={(emoji, url) => void handleEmojiPick(emoji, url)}
+          onCancel={() => setShowEmojiPicker(false)}
         />
       )}
     </main>

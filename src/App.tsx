@@ -38,6 +38,10 @@ function basename(path: string): string {
   return parts[parts.length - 1] || "Image";
 }
 
+function projectDisplayName(path: string): string {
+  return basename(path).replace(/\.thumbl\.json$/i, "").replace(/\.json$/i, "") || "Untitled Project";
+}
+
 function App() {
   const { project, setProject, setProjectSilent, pushSnapshot, resetProject, undo, redo, canUndo, canRedo } = useHistory<Project>();
   const preChangeRef = useRef<Project | null>(null);
@@ -51,6 +55,7 @@ function App() {
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>(() => getRecentFiles());
+  const [isDirty, setIsDirty] = useState(false);
   const isResizingBrowser = useRef(false);
   const canvasRef = useRef<PixiCanvasHandle>(null);
 
@@ -61,6 +66,7 @@ function App() {
   const selectedLayer = project?.layers.find((l) => l.id === selectedId) ?? null;
 
   function updateLayer(id: string, changes: LayerChanges) {
+    setIsDirty(true);
     // Capture snapshot before the first change in this drag/edit session
     if (preChangeRef.current === null && project !== null) {
       preChangeRef.current = project;
@@ -88,6 +94,7 @@ function App() {
       layers.splice(toIndex, 0, moved);
       return { ...p, layers };
     });
+    setIsDirty(true);
   }
 
   function deleteLayer(id: string) {
@@ -95,6 +102,7 @@ function App() {
       p ? { ...p, layers: p.layers.filter((l) => l.id !== id) } : p
     );
     setSelectedId((current) => (current === id ? null : current));
+    setIsDirty(true);
   }
 
   function toggleLayerVisible(id: string) {
@@ -108,6 +116,7 @@ function App() {
           }
         : p
     );
+    setIsDirty(true);
   }
 
   function changeLayerBlendMode(id: string, blendMode: BlendMode) {
@@ -120,6 +129,7 @@ function App() {
 
   function updateGlobalAdjustments(adj: ColorAdjustments) {
     setProject((p) => (p ? { ...p, globalAdjustments: adj } : p));
+    setIsDirty(true);
   }
 
   function handleNewCanvas(width: number, height: number) {
@@ -140,6 +150,7 @@ function App() {
     });
     setSelectedId(null);
     setFilePath(null);
+    setIsDirty(false);
     setShowNewCanvasDialog(false);
   }
 
@@ -184,6 +195,7 @@ function App() {
   function addLayer(layer: Layer) {
     setProject((p) => (p ? { ...p, layers: [...p.layers, layer] } : p));
     setSelectedId(layer.id);
+    setIsDirty(true);
   }
 
   function addTextLayer() {
@@ -264,24 +276,18 @@ function App() {
     if (!project) return;
     if (filePath) {
       await saveProject(project, filePath);
-      setRecentFiles(addRecentFile(filePath, basename(filePath)));
+      setIsDirty(false);
+      setRecentFiles(addRecentFile(filePath, projectDisplayName(filePath)));
     } else {
       const path = await saveProjectAs(project);
       if (path) {
         setFilePath(path);
-        setRecentFiles(addRecentFile(path, basename(path)));
+        setIsDirty(false);
+        setRecentFiles(addRecentFile(path, projectDisplayName(path)));
       }
     }
   }
 
-  async function handleSaveAs() {
-    if (!project) return;
-    const path = await saveProjectAs(project);
-    if (path) {
-      setFilePath(path);
-      setRecentFiles(addRecentFile(path, basename(path)));
-    }
-  }
 
   async function handleOpen() {
     const result = await openProject();
@@ -289,7 +295,8 @@ function App() {
       resetProject(result.project);
       setFilePath(result.path);
       setSelectedId(null);
-      setRecentFiles(addRecentFile(result.path, basename(result.path)));
+      setIsDirty(false);
+      setRecentFiles(addRecentFile(result.path, projectDisplayName(result.path)));
     }
   }
 
@@ -299,7 +306,8 @@ function App() {
       resetProject(result.project);
       setFilePath(result.path);
       setSelectedId(null);
-      setRecentFiles(addRecentFile(result.path, basename(result.path)));
+      setIsDirty(false);
+      setRecentFiles(addRecentFile(result.path, projectDisplayName(result.path)));
     } else {
       setRecentFiles(removeRecentFile(path));
     }
@@ -329,15 +337,19 @@ function App() {
 
       const ctrl = e.ctrlKey || e.metaKey;
       if (!ctrl) return;
+
+      // Block browser/webview shortcuts that would wipe app state
+      if (["r", "R", "F5", "w", "W", "f", "F", "p", "P", "u", "U"].includes(e.key)) {
+        e.preventDefault();
+        return;
+      }
+
       if (e.key === "n") {
         e.preventDefault();
         setShowNewCanvasDialog(true);
       } else if (e.key === "o") {
         e.preventDefault();
         void handleOpen();
-      } else if (e.key === "s" && e.shiftKey) {
-        e.preventDefault();
-        void handleSaveAs();
       } else if (e.key === "s") {
         e.preventDefault();
         void handleSave();
@@ -363,7 +375,8 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, filePath]);
 
-  const title = filePath ? basename(filePath) : "";
+  const projectName = filePath ? projectDisplayName(filePath) : project ? "Untitled Project" : "";
+  const title = isDirty && project ? `${projectName} | edited` : projectName;
 
   return (
     <main className="app">
@@ -379,6 +392,7 @@ function App() {
                 onClick: () => setShowNewCanvasDialog(true),
               },
               { label: "Open Project...", shortcut: "Ctrl+O", onClick: () => void handleOpen() },
+
               { label: "", separator: true, onClick: () => {} },
               ...(recentFiles.length > 0
                 ? recentFiles.map((f) => ({
@@ -391,12 +405,6 @@ function App() {
                 label: "Save",
                 shortcut: "Ctrl+S",
                 onClick: () => void handleSave(),
-                disabled: !project,
-              },
-              {
-                label: "Save As...",
-                shortcut: "Ctrl+Shift+S",
-                onClick: () => void handleSaveAs(),
                 disabled: !project,
               },
               {

@@ -9,9 +9,14 @@
 }
 
 .menu-bar-title {
-  font-size: 0.95em;
-  font-weight: 600;
-  margin-right: 0.75em;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.88em;
+  font-weight: 500;
+  color: #ccc;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .menu-root {

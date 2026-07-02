@@ -1,6 +1,6 @@
 # thumbl
 
-Open source desktop thumbnail/meme editor.
+Open source desktop photo editor.
 
 - **Framework:** Tauri v2 (Rust + React/TypeScript)
 - **Canvas:** PixiJS

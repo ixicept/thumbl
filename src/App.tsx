@@ -64,6 +64,7 @@ function App() {
   const isResizingBrowser = useRef(false);
   const canvasRef = useRef<PixiCanvasHandle>(null);
   const canvasAreaRef = useRef<HTMLDivElement>(null);
+  const selectionAnchorId = useRef<string | null>(null);
 const dragToolRef = useRef<string | null>(null);
   const [dragVisual, setDragVisual] = useState<{ label: string; x: number; y: number } | null>(null);
   const toolActionsRef = useRef<Record<string, (pos?: { x: number; y: number }) => void>>({});
@@ -165,15 +166,33 @@ const dragToolRef = useRef<string | null>(null);
 
   function toggleLayerVisible(id: string) {
     setProject((p) =>
-      p
-        ? {
-            ...p,
-            layers: p.layers.map((l) =>
-              l.id === id ? { ...l, visible: !l.visible } : l
-            ),
-          }
-        : p
+      p ? { ...p, layers: p.layers.map((l) => l.id === id ? { ...l, visible: !l.visible } : l) } : p
     );
+    setIsDirty(true);
+  }
+
+  function batchSetVisible(ids: string[], visible: boolean) {
+    setProject((p) =>
+      p ? { ...p, layers: p.layers.map((l) => ids.includes(l.id) ? { ...l, visible } : l) } : p
+    );
+    setIsDirty(true);
+  }
+
+  function batchReorder(ids: string[], overId: string) {
+    setProject((p) => {
+      if (!p) return p;
+      const layers = p.layers;
+      const selected = layers.filter((l) => ids.includes(l.id));
+      const remaining = layers.filter((l) => !ids.includes(l.id));
+      const overIdx = remaining.findIndex((l) => l.id === overId);
+      if (overIdx === -1) return p;
+      // Determine direction: if selected group's average index is below the target,
+      // we're moving up the stack → insert after; otherwise insert before.
+      const avgOrigIdx = ids.reduce((sum, id) => sum + layers.findIndex((l) => l.id === id), 0) / ids.length;
+      const overOrigIdx = layers.findIndex((l) => l.id === overId);
+      const insertIdx = avgOrigIdx < overOrigIdx ? overIdx + 1 : overIdx;
+      return { ...p, layers: [...remaining.slice(0, insertIdx), ...selected, ...remaining.slice(insertIdx)] };
+    });
     setIsDirty(true);
   }
 
@@ -374,8 +393,13 @@ const dragToolRef = useRef<string | null>(null);
     }
   }
 
-  function deleteSelectedLayer() {
-    if (selectedId) deleteLayer(selectedId);
+  function deleteSelectedLayers() {
+    if (selectedIds.length === 0) return;
+    setProject((p) =>
+      p ? { ...p, layers: p.layers.filter((l) => !selectedIds.includes(l.id)) } : p
+    );
+    setSelectedIds([]);
+    setIsDirty(true);
   }
 
   function deselectAll() {
@@ -392,7 +416,7 @@ const dragToolRef = useRef<string | null>(null);
 
       if (!isTyping && (e.key === "Backspace" || e.key === "Delete") && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        deleteSelectedLayer();
+        deleteSelectedLayers();
         return;
       }
 
@@ -405,6 +429,11 @@ const dragToolRef = useRef<string | null>(null);
         return;
       }
 
+      if (e.key === "a" || e.key === "A") {
+        e.preventDefault();
+        if (!isTyping && project) setSelectedIds(project.layers.filter((l) => l.type !== "fill").map((l) => l.id));
+        return;
+      }
 
       if (e.key === "n") {
         e.preventDefault();
@@ -484,7 +513,7 @@ const dragToolRef = useRef<string | null>(null);
               { label: "Redo", shortcut: "Ctrl+Y", onClick: redo, disabled: !canRedo },
               {
                 label: "Delete Layer",
-                onClick: deleteSelectedLayer,
+                onClick: deleteSelectedLayers,
                 disabled: !selectedId,
               },
               {
@@ -529,15 +558,35 @@ const dragToolRef = useRef<string | null>(null);
       {project ? (
         <div className="main-area">
         <div className="workspace">
-          <aside className="layers-panel">
+          <aside className="layers-panel" onClick={(e) => { if (!(e.target as HTMLElement).closest(".layer-row")) setSelectedIds([]); }}>
             {activeLeftTab === "layers" ? (
               <LayersPanel
                 layers={project.layers}
                 selectedIds={selectedIds}
-                onSelect={(id) => setSelectedIds(id ? [id] : [])}
+                onSelect={(id) => {
+                  selectionAnchorId.current = id;
+                  setSelectedIds(id ? [id] : []);
+                }}
+                onCtrlSelect={(id) => {
+                  selectionAnchorId.current = id;
+                  setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+                }}
+                onRangeSelect={(id) => {
+                  const layers = project.layers;
+                  const anchorIdx = selectionAnchorId.current ? layers.findIndex((l) => l.id === selectionAnchorId.current) : -1;
+                  const targetIdx = layers.findIndex((l) => l.id === id);
+                  if (anchorIdx === -1) { setSelectedIds([id]); selectionAnchorId.current = id; return; }
+                  const [start, end] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+                  setSelectedIds(layers.slice(start, end + 1).map((l) => l.id));
+                }}
                 onReorder={reorderLayer}
+                onBatchReorder={batchReorder}
                 onToggleVisible={toggleLayerVisible}
-                onDelete={deleteLayer}
+                onBatchSetVisible={batchSetVisible}
+                onDelete={(id) => {
+                  if (selectedIds.includes(id) && selectedIds.length > 1) deleteSelectedLayers();
+                  else deleteLayer(id);
+                }}
                 onBlendModeChange={changeLayerBlendMode}
                 onColorChange={changeLayerColor}
                 onRename={(id, name) => updateLayer(id, { name })}

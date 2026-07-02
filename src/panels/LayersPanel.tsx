@@ -1,12 +1,22 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   DndContext,
   PointerSensor,
   closestCenter,
+  pointerWithin,
+  type CollisionDetection,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragMoveEvent,
+  type DragStartEvent,
+  type Modifier,
 } from "@dnd-kit/core";
+
+const collisionDetection: CollisionDetection = (args) => {
+  const hits = pointerWithin(args);
+  return hits.length > 0 ? hits : closestCenter(args);
+};
 import {
   SortableContext,
   useSortable,
@@ -40,12 +50,18 @@ const BLEND_MODES: BlendMode[] = [
   "add",
 ];
 
+const verticalOnly: Modifier = ({ transform }) => ({ ...transform, x: 0 });
+
 interface LayersPanelProps {
   layers: Layer[];
   selectedIds: string[];
   onSelect: (id: string | null) => void;
+  onCtrlSelect: (id: string) => void;
+  onRangeSelect: (id: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  onBatchReorder: (ids: string[], overId: string) => void;
   onToggleVisible: (id: string) => void;
+  onBatchSetVisible: (ids: string[], visible: boolean) => void;
   onDelete: (id: string) => void;
   onBlendModeChange: (id: string, blendMode: BlendMode) => void;
   onColorChange: (id: string, color: string) => void;
@@ -56,8 +72,12 @@ export function LayersPanel({
   layers,
   selectedIds,
   onSelect,
+  onCtrlSelect,
+  onRangeSelect,
   onReorder,
+  onBatchReorder,
   onToggleVisible,
+  onBatchSetVisible,
   onDelete,
   onBlendModeChange,
   onColorChange,
@@ -66,17 +86,48 @@ export function LayersPanel({
   const sensors = useSensors(useSensor(PointerSensor));
   const displayLayers = [...layers].reverse();
 
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [dragDelta, setDragDelta] = useState<{ x: number; y: number } | null>(null);
+
+  const isBatchDrag = activeId !== null && selectedIds.includes(activeId) && selectedIds.length > 1;
+
+  // During batch drag, exclude non-active selected layers from sortable so dnd-kit
+  // doesn't calculate conflicting sort transforms for them.
+  const sortableIds = isBatchDrag
+    ? displayLayers.filter((l) => !selectedIds.includes(l.id) || l.id === activeId).map((l) => l.id)
+    : displayLayers.map((l) => l.id);
+
+  function handleDragStart(event: DragStartEvent) {
+    setActiveId(String(event.active.id));
+    setDragDelta(null);
+  }
+
+  function handleDragMove(event: DragMoveEvent) {
+    if (isBatchDrag) setDragDelta(event.delta);
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
+    setActiveId(null);
+    setDragDelta(null);
+
     if (!over || active.id === over.id) return;
 
-    const oldDisplayIndex = displayLayers.findIndex((l) => l.id === active.id);
-    const newDisplayIndex = displayLayers.findIndex((l) => l.id === over.id);
-    if (oldDisplayIndex === -1 || newDisplayIndex === -1) return;
+    if (isBatchDrag) {
+      onBatchReorder(selectedIds, String(over.id));
+    } else {
+      const oldDisplayIndex = displayLayers.findIndex((l) => l.id === active.id);
+      const newDisplayIndex = displayLayers.findIndex((l) => l.id === over.id);
+      if (oldDisplayIndex === -1 || newDisplayIndex === -1) return;
+      const fromIndex = layers.length - 1 - oldDisplayIndex;
+      const toIndex = layers.length - 1 - newDisplayIndex;
+      onReorder(fromIndex, toIndex);
+    }
+  }
 
-    const fromIndex = layers.length - 1 - oldDisplayIndex;
-    const toIndex = layers.length - 1 - newDisplayIndex;
-    onReorder(fromIndex, toIndex);
+  function handleDragCancel() {
+    setActiveId(null);
+    setDragDelta(null);
   }
 
   return (
@@ -86,27 +137,40 @@ export function LayersPanel({
       )}
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={collisionDetection}
+        modifiers={[verticalOnly]}
+        onDragStart={handleDragStart}
+        onDragMove={handleDragMove}
         onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
       >
-        <SortableContext
-          items={displayLayers.map((l) => l.id)}
-          strategy={verticalListSortingStrategy}
-        >
+        <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
           <ul className="layers-list">
-            {displayLayers.map((layer) => (
-              <LayerRow
-                key={layer.id}
-                layer={layer}
-                selected={selectedIds.includes(layer.id)}
-                onSelect={onSelect}
-                onToggleVisible={onToggleVisible}
-                onDelete={onDelete}
-                onBlendModeChange={onBlendModeChange}
-                onColorChange={onColorChange}
-                onRename={onRename}
-              />
-            ))}
+            {displayLayers.map((layer) => {
+              const isGroupMember =
+                isBatchDrag &&
+                selectedIds.includes(layer.id) &&
+                layer.id !== activeId;
+              return (
+                <LayerRow
+                  key={layer.id}
+                  layer={layer}
+                  selected={selectedIds.includes(layer.id)}
+                  selectedIds={selectedIds}
+                  isGroupMember={isGroupMember}
+                  dragDelta={isGroupMember ? dragDelta : null}
+                  onSelect={onSelect}
+                  onCtrlSelect={onCtrlSelect}
+                  onRangeSelect={onRangeSelect}
+                  onToggleVisible={onToggleVisible}
+                  onBatchSetVisible={onBatchSetVisible}
+                  onDelete={onDelete}
+                  onBlendModeChange={onBlendModeChange}
+                  onColorChange={onColorChange}
+                  onRename={onRename}
+                />
+              );
+            })}
           </ul>
         </SortableContext>
       </DndContext>
@@ -117,33 +181,55 @@ export function LayersPanel({
 interface LayerRowProps {
   layer: Layer;
   selected: boolean;
+  selectedIds: string[];
+  isGroupMember: boolean;
+  dragDelta: { x: number; y: number } | null;
   onSelect: (id: string | null) => void;
+  onCtrlSelect: (id: string) => void;
+  onRangeSelect: (id: string) => void;
   onToggleVisible: (id: string) => void;
+  onBatchSetVisible: (ids: string[], visible: boolean) => void;
   onDelete: (id: string) => void;
   onBlendModeChange: (id: string, blendMode: BlendMode) => void;
   onColorChange: (id: string, color: string) => void;
   onRename: (id: string, name: string) => void;
 }
 
-function LayerRow({
+const LayerRow = memo(function LayerRow({
   layer,
   selected,
+  selectedIds,
+  isGroupMember,
+  dragDelta,
   onSelect,
+  onCtrlSelect,
+  onRangeSelect,
   onToggleVisible,
+  onBatchSetVisible,
   onDelete,
   onBlendModeChange,
   onColorChange,
   onRename,
 }: LayerRowProps) {
-  const { attributes, listeners, setNodeRef, transform, transition } =
-    useSortable({ id: layer.id });
+  // Disable sortable for group members so dnd-kit doesn't apply competing transforms
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+    id: layer.id,
+    disabled: isGroupMember,
+  });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(layer.name);
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
+  const style = isGroupMember
+    ? {
+        transform: dragDelta ? `translateY(${dragDelta.y}px)` : undefined,
+        transition: "none",
+        zIndex: 100,
+        opacity: 0.85,
+      }
+    : {
+        transform: CSS.Transform.toString(transform),
+        transition,
+      };
 
   function startEditing() {
     setDraft(layer.name);
@@ -156,12 +242,25 @@ function LayerRow({
     setEditing(false);
   }
 
+  function handleVisibilityClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (selected && selectedIds.length > 1) {
+      onBatchSetVisible(selectedIds, !layer.visible);
+    } else {
+      onToggleVisible(layer.id);
+    }
+  }
+
   return (
     <li
       ref={setNodeRef}
       style={style}
       className={`layer-row${selected ? " layer-row-selected" : ""}`}
-      onClick={() => onSelect(layer.id)}
+      onClick={(e) => {
+        if (e.shiftKey) onRangeSelect(layer.id);
+        else if (e.ctrlKey || e.metaKey) onCtrlSelect(layer.id);
+        else onSelect(layer.id);
+      }}
     >
       <button
         className="layer-drag-handle"
@@ -171,21 +270,11 @@ function LayerRow({
       >
         ⠿
       </button>
-      <button
-        className="layer-visibility-toggle"
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleVisible(layer.id);
-        }}
-      >
+      <button className="layer-visibility-toggle" onClick={handleVisibilityClick}>
         {layer.visible ? "👁" : "🚫"}
       </button>
       {layer.type === "image" && (
-        <img
-          className="layer-thumbnail"
-          src={convertFileSrc(layer.src)}
-          alt=""
-        />
+        <img className="layer-thumbnail" src={convertFileSrc(layer.src)} alt="" />
       )}
       {layer.type === "fill" && (
         <input
@@ -228,9 +317,7 @@ function LayerRow({
         className="layer-blend-mode"
         value={layer.blendMode}
         onClick={(e) => e.stopPropagation()}
-        onChange={(e) =>
-          onBlendModeChange(layer.id, e.target.value as BlendMode)
-        }
+        onChange={(e) => onBlendModeChange(layer.id, e.target.value as BlendMode)}
       >
         {BLEND_MODES.map((mode) => (
           <option key={mode} value={mode}>
@@ -249,4 +336,4 @@ function LayerRow({
       </button>
     </li>
   );
-}
+});

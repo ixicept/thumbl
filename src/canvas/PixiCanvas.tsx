@@ -711,7 +711,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
   }), [pan, zoom, canvasWidth, canvasHeight]);
 
   return (
-    <div ref={viewportRef} className="pixi-canvas-viewport">
+    <div ref={viewportRef} className="pixi-canvas-viewport" onClick={(e) => { if (e.target === e.currentTarget) onSelectRef.current(null); }}>
       <div
         ref={hostRef}
         className="pixi-canvas-host"

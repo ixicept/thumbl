@@ -7,8 +7,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PixiCanvas, type PixiCanvasHandle } from "./canvas/PixiCanvas";
 import { LayersPanel } from "./panels/LayersPanel";
 import { PropertiesPanel } from "./panels/PropertiesPanel";
+import { EffectsPanel } from "./panels/EffectsPanel";
 import { BrowserPanel } from "./panels/BrowserPanel";
 import { MenuBar } from "./menu/MenuBar";
+import { ToolBar } from "./menu/ToolBar";
 import { WelcomeScreen } from "./WelcomeScreen";
 import { NewCanvasDialog } from "./dialogs/NewCanvasDialog";
 import { ExportDialog } from "./dialogs/ExportDialog";
@@ -56,6 +58,7 @@ function App() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>(() => getRecentFiles());
   const [isDirty, setIsDirty] = useState(false);
+  const [activeLeftTab, setActiveLeftTab] = useState<"layers" | "effects">("layers");
   const isResizingBrowser = useRef(false);
   const canvasRef = useRef<PixiCanvasHandle>(null);
 
@@ -408,11 +411,6 @@ function App() {
                 disabled: !project,
               },
               {
-                label: "Import Image...",
-                onClick: () => void handleImportImage(),
-                disabled: !project,
-              },
-              {
                 label: "Export Image...",
                 shortcut: "Ctrl+E",
                 onClick: () => setShowExportDialog(true),
@@ -448,34 +446,43 @@ function App() {
               },
             ],
           },
-          {
-            label: "Insert",
-            items: [
-              { label: "Text", shortcut: "Ctrl+T", onClick: addTextLayer, disabled: !project },
-              { label: "Rectangle", onClick: () => addShapeLayer("rect"), disabled: !project },
-              { label: "Ellipse", onClick: () => addShapeLayer("ellipse"), disabled: !project },
-              { label: "Line", onClick: () => addShapeLayer("line"), disabled: !project },
-              { label: "Arrow", onClick: () => addShapeLayer("arrow"), disabled: !project },
-              { label: "Emoji...", onClick: () => setShowEmojiPicker(true), disabled: !project },
-            ],
-          },
         ]}
       />
+      {project && (
+        <ToolBar
+          activeTab={activeLeftTab}
+          onTabChange={(id) => setActiveLeftTab(id as "layers" | "effects")}
+          tabs={[
+            { id: "layers", label: "Layers", icon: null },
+            { id: "effects", label: "Tools", icon: null },
+          ]}
+        />
+      )}
       {project ? (
         <div className="main-area">
         <div className="workspace">
           <aside className="layers-panel">
-            <LayersPanel
-              layers={project.layers}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              onReorder={reorderLayer}
-              onToggleVisible={toggleLayerVisible}
-              onDelete={deleteLayer}
-              onBlendModeChange={changeLayerBlendMode}
-              onColorChange={changeLayerColor}
-              onRename={(id, name) => updateLayer(id, { name })}
-            />
+            {activeLeftTab === "layers" ? (
+              <LayersPanel
+                layers={project.layers}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                onReorder={reorderLayer}
+                onToggleVisible={toggleLayerVisible}
+                onDelete={deleteLayer}
+                onBlendModeChange={changeLayerBlendMode}
+                onColorChange={changeLayerColor}
+                onRename={(id, name) => updateLayer(id, { name })}
+              />
+            ) : (
+              <EffectsPanel
+                disabled={!project}
+                onAddText={addTextLayer}
+                onAddShape={addShapeLayer}
+                onImportImage={() => void handleImportImage()}
+                onOpenEmoji={() => setShowEmojiPicker(true)}
+              />
+            )}
           </aside>
           <div className="canvas-area">
             <PixiCanvas

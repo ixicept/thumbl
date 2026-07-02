@@ -6,14 +6,6 @@
   overflow-y: auto;
 }
 
-.layers-panel-content h2 {
-  font-size: 0.9em;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #9a9a9a;
-  margin: 0 0 0.5em 0;
-}
-
 .layers-panel-empty {
   font-size: 0.85em;
   color: #777;

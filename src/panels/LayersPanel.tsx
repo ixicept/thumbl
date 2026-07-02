@@ -81,8 +81,7 @@ export function LayersPanel({
 
   return (
     <div className="layers-panel-content">
-      <h2>Layers</h2>
-      {displayLayers.length === 0 && (
+{displayLayers.length === 0 && (
         <p className="layers-panel-empty">No layers yet</p>
       )}
       <DndContext

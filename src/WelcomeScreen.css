@@ -41,6 +41,7 @@
 
 .welcome-actions {
   display: flex;
+  align-items: stretch;
   gap: 1em;
   width: 100%;
 }
@@ -85,7 +86,7 @@
 
 .welcome-btn-primary .welcome-btn-icon {
   color: #4f9eff;
-  font-size: 2em;
+  font-size: 1.6em;
   font-weight: 300;
 }
 

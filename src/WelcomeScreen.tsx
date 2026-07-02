@@ -14,7 +14,6 @@ export function WelcomeScreen({ recentFiles, onNewCanvas, onOpen, onOpenRecent }
       <div className="welcome-content">
         <div className="welcome-hero">
           <h1 className="welcome-title">Thumbl</h1>
-          <p className="welcome-subtitle">Desktop thumbnail &amp; meme editor</p>
         </div>
 
         <div className="welcome-actions">

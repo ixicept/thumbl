@@ -11,9 +11,10 @@ interface ToolBarProps {
   tabs: Tab[];
   activeTab: string;
   onTabChange: (id: string) => void;
+  title?: string;
 }
 
-export function ToolBar({ tabs, activeTab, onTabChange }: ToolBarProps) {
+export function ToolBar({ tabs, activeTab, onTabChange, title }: ToolBarProps) {
   return (
     <div className="tool-bar">
       {tabs.map((tab) => (
@@ -26,6 +27,7 @@ export function ToolBar({ tabs, activeTab, onTabChange }: ToolBarProps) {
           <span className="tool-bar-tab-label">{tab.label}</span>
         </button>
       ))}
+      {title && <span className="tool-bar-title">{title}</span>}
     </div>
   );
 }

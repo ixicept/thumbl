@@ -54,7 +54,7 @@ export function WelcomeScreen({ recentFiles, onNewCanvas, onOpen, onOpenRecent }
         )}
 
         <p className="welcome-shortcuts">
-          <kbd>Ctrl+N</kbd> New &nbsp;·&nbsp; <kbd>Ctrl+O</kbd> Open &nbsp;·&nbsp; <kbd>Ctrl+S</kbd> Save &nbsp;·&nbsp; <kbd>Ctrl+E</kbd> Export
+          <kbd>Ctrl+N</kbd> New &nbsp;·&nbsp; <kbd>Ctrl+O</kbd> Open &nbsp;·&nbsp; <kbd>Ctrl+S</kbd> Save Project &nbsp;·&nbsp; <kbd>Ctrl+E</kbd> Export
         </p>
       </div>
     </div>

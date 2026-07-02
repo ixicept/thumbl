@@ -15,6 +15,7 @@ import { WelcomeScreen } from "./WelcomeScreen";
 import { NewCanvasDialog } from "./dialogs/NewCanvasDialog";
 import { ExportDialog } from "./dialogs/ExportDialog";
 import { EmojiPicker } from "./dialogs/EmojiPicker";
+import { ShortcutsDialog } from "./dialogs/ShortcutsDialog";
 import { loadFonts, type FontFamily } from "./fonts";
 import {
   openProject,
@@ -59,6 +60,7 @@ function App() {
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>(() => getRecentFiles());
   const [isDirty, setIsDirty] = useState(false);
   const [activeLeftTab, setActiveLeftTab] = useState<"layers" | "effects">("layers");
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const isResizingBrowser = useRef(false);
   const canvasRef = useRef<PixiCanvasHandle>(null);
 
@@ -384,7 +386,6 @@ function App() {
   return (
     <main className="app">
       <MenuBar
-        title={title}
         menus={[
           {
             label: "File",
@@ -405,7 +406,7 @@ function App() {
                 : [{ label: "No recent files", disabled: true, onClick: () => {} }]),
               { label: "", separator: true, onClick: () => {} },
               {
-                label: "Save",
+                label: "Save Project",
                 shortcut: "Ctrl+S",
                 onClick: () => void handleSave(),
                 disabled: !project,
@@ -446,6 +447,15 @@ function App() {
               },
             ],
           },
+          {
+            label: "Settings",
+            items: [
+              {
+                label: "Keyboard Shortcuts...",
+                onClick: () => setShowShortcuts(true),
+              },
+            ],
+          },
         ]}
       />
       {project && (
@@ -456,6 +466,7 @@ function App() {
             { id: "layers", label: "Layers", icon: null },
             { id: "effects", label: "Tools", icon: null },
           ]}
+          title={title}
         />
       )}
       {project ? (
@@ -567,6 +578,9 @@ function App() {
           onPick={(emoji, url) => void handleEmojiPick(emoji, url)}
           onCancel={() => setShowEmojiPicker(false)}
         />
+      )}
+      {showShortcuts && (
+        <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
       )}
     </main>
   );

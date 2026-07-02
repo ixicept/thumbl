@@ -1,24 +1,74 @@
 .menu-bar {
   display: flex;
   align-items: center;
-  gap: 0.5em;
-  padding: 0.3em 0.8em;
+  padding: 0 0 0 0.6em;
   background-color: #1a1a1a;
   border-bottom: 1px solid #2e2e2e;
   position: relative;
   flex-shrink: 0;
+  height: 34px;
+  user-select: none;
+}
+
+.menu-bar-app-name {
+  font-size: 0.82em;
+  font-weight: 600;
+  color: #888;
+  letter-spacing: 0.04em;
+  margin-right: 0.6em;
+  flex-shrink: 0;
+}
+
+.menu-bar-menus {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .menu-bar-title {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.88em;
+  font-size: 0.82em;
   font-weight: 500;
   color: #ccc;
   pointer-events: none;
   white-space: nowrap;
 }
+
+/* Window controls */
+
+.menu-bar-window-controls {
+  display: flex;
+  align-items: stretch;
+  margin-left: auto;
+  height: 100%;
+}
+
+.wc-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  background: none;
+  border: none;
+  color: #aaa;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.wc-btn:hover {
+  background: #2e2e2e;
+  color: #f0f0f0;
+}
+
+.wc-btn-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+/* Menus */
 
 .menu-root {
   position: relative;
@@ -27,16 +77,18 @@
 .menu-label {
   background: none;
   border: none;
-  color: #f0f0f0;
-  font-size: 0.9em;
+  color: #ccc;
+  font-size: 0.82em;
   padding: 0.3em 0.6em;
   border-radius: 4px;
   cursor: pointer;
+  height: 100%;
 }
 
 .menu-label:hover,
 .menu-label-active {
-  background-color: #3a3a3a;
+  background-color: #2e2e2e;
+  color: #f0f0f0;
 }
 
 .menu-dropdown {

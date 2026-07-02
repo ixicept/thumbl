@@ -7,6 +7,18 @@
   border-bottom: 1px solid #2e2e2e;
   flex-shrink: 0;
   height: 34px;
+  position: relative;
+}
+
+.tool-bar-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.82em;
+  font-weight: 500;
+  color: #ccc;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .tool-bar-tab {

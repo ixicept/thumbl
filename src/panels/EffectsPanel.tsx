@@ -1,12 +1,14 @@
+import type React from "react";
 import type { ShapeKind } from "../types/project";
 import "./EffectsPanel.css";
 
 interface EffectsPanelProps {
-  disabled: boolean;
+  disabled?: boolean;
   onAddText: () => void;
   onAddShape: (kind: ShapeKind) => void;
   onImportImage: () => void;
   onOpenEmoji: () => void;
+  onToolPointerDown?: (toolId: string, toolLabel: string, e: React.PointerEvent) => void;
 }
 
 interface EffectItem {
@@ -21,7 +23,7 @@ interface EffectGroup {
   items: EffectItem[];
 }
 
-export function EffectsPanel({ disabled, onAddText, onAddShape, onImportImage, onOpenEmoji }: EffectsPanelProps) {
+export function EffectsPanel({ disabled = false, onAddText, onAddShape, onImportImage, onOpenEmoji, onToolPointerDown }: EffectsPanelProps) {
   const groups: EffectGroup[] = [
     {
       label: "Text",
@@ -129,6 +131,9 @@ export function EffectsPanel({ disabled, onAddText, onAddShape, onImportImage, o
                 key={item.id}
                 className="effects-item"
                 disabled={disabled}
+                onPointerDown={(e) => {
+                  if (!disabled) onToolPointerDown?.(item.id, item.label, e);
+                }}
                 onClick={item.onClick}
                 title={item.label}
               >

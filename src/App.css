@@ -11,6 +11,11 @@
 
 * {
   box-sizing: border-box;
+  user-select: none;
+}
+
+input, textarea, [contenteditable], .canvas-area, .canvas-area * {
+  user-select: text;
 }
 
 ::-webkit-scrollbar {
@@ -124,4 +129,19 @@ body,
 
 .pixi-canvas-host {
   box-shadow: 0 0 0 1px #3a3a3a;
+}
+
+.drag-ghost {
+  position: fixed;
+  background: #2a2a2a;
+  border: 1px solid #4f9eff;
+  border-radius: 6px;
+  padding: 0.3em 0.75em;
+  font-size: 0.8em;
+  color: #f0f0f0;
+  pointer-events: none;
+  z-index: 9999;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  user-select: none;
 }

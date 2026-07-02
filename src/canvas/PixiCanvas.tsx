@@ -211,6 +211,7 @@ function buildColorFilter(adj: ColorAdjustments): ColorMatrixFilter | null {
 
 export interface PixiCanvasHandle {
   exportImage(format: "png" | "jpeg", quality?: number): Promise<string>;
+  screenToNormalized(clientX: number, clientY: number): { x: number; y: number } | null;
 }
 
 interface PixiCanvasProps {
@@ -696,7 +697,18 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
 
       return dataUrl;
     },
-  }), []);
+    screenToNormalized(clientX: number, clientY: number) {
+      const viewport = viewportRef.current;
+      if (!viewport) return null;
+      const rect = viewport.getBoundingClientRect();
+      const relX = clientX - (rect.left + rect.width / 2) - pan.x;
+      const relY = clientY - (rect.top + rect.height / 2) - pan.y;
+      return {
+        x: relX / zoom / canvasWidth,
+        y: relY / zoom / canvasHeight,
+      };
+    },
+  }), [pan, zoom, canvasWidth, canvasHeight]);
 
   return (
     <div ref={viewportRef} className="pixi-canvas-viewport">

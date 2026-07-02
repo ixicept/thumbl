@@ -42,7 +42,7 @@ const BLEND_MODES: BlendMode[] = [
 
 interface LayersPanelProps {
   layers: Layer[];
-  selectedId: string | null;
+  selectedIds: string[];
   onSelect: (id: string | null) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onToggleVisible: (id: string) => void;
@@ -54,7 +54,7 @@ interface LayersPanelProps {
 
 export function LayersPanel({
   layers,
-  selectedId,
+  selectedIds,
   onSelect,
   onReorder,
   onToggleVisible,
@@ -98,7 +98,7 @@ export function LayersPanel({
               <LayerRow
                 key={layer.id}
                 layer={layer}
-                selected={layer.id === selectedId}
+                selected={selectedIds.includes(layer.id)}
                 onSelect={onSelect}
                 onToggleVisible={onToggleVisible}
                 onDelete={onDelete}

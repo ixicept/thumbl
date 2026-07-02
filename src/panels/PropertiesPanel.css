@@ -221,6 +221,12 @@
   margin-bottom: 0.25em;
 }
 
+.prop-multi-hint {
+  font-size: 0.82em;
+  color: #555;
+  padding: 0.5em 0;
+}
+
 /* --- color wheels --- */
 
 .color-wheels-row {

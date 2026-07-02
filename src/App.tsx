@@ -49,7 +49,7 @@ function App() {
   const { project, setProject, setProjectSilent, pushSnapshot, resetProject, undo, redo, canUndo, canRedo } = useHistory<Project>();
   const preChangeRef = useRef<Project | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [showNewCanvasDialog, setShowNewCanvasDialog] = useState(false);
   const [fonts, setFonts] = useState<FontFamily[]>([]);
@@ -63,11 +63,64 @@ function App() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const isResizingBrowser = useRef(false);
   const canvasRef = useRef<PixiCanvasHandle>(null);
+  const canvasAreaRef = useRef<HTMLDivElement>(null);
+const dragToolRef = useRef<string | null>(null);
+  const [dragVisual, setDragVisual] = useState<{ label: string; x: number; y: number } | null>(null);
+  const toolActionsRef = useRef<Record<string, (pos?: { x: number; y: number }) => void>>({});
 
   useEffect(() => {
     void loadFonts().then(setFonts);
   }, []);
 
+  // Keep tool actions fresh so pointer-up handler always calls current functions
+  toolActionsRef.current = {
+    text: (pos) => addTextLayer(pos),
+    rect: (pos) => addShapeLayer("rect", pos),
+    ellipse: (pos) => addShapeLayer("ellipse", pos),
+    line: (pos) => addShapeLayer("line", pos),
+    arrow: (pos) => addShapeLayer("arrow", pos),
+    image: () => void handleImportImage(),
+    emoji: () => setShowEmojiPicker(true),
+  };
+
+  function handleToolPointerDown(toolId: string, toolLabel: string, e: React.PointerEvent) {
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const pointerId = e.pointerId;
+    let dragging = false;
+
+    function onMove(ev: PointerEvent) {
+      if (ev.pointerId !== pointerId) return;
+      if (!dragging) {
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
+        dragging = true;
+        dragToolRef.current = toolId;
+        setDragVisual({ label: toolLabel, x: ev.clientX, y: ev.clientY });
+      } else {
+        setDragVisual((v) => v ? { ...v, x: ev.clientX, y: ev.clientY } : null);
+      }
+    }
+
+    function onUp(ev: PointerEvent) {
+      if (ev.pointerId !== pointerId) return;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      if (!dragging) return;
+      dragToolRef.current = null;
+      setDragVisual(null);
+      const rect = canvasAreaRef.current?.getBoundingClientRect();
+      if (rect && ev.clientX >= rect.left && ev.clientX <= rect.right &&
+          ev.clientY >= rect.top && ev.clientY <= rect.bottom) {
+        const pos = canvasRef.current?.screenToNormalized(ev.clientX, ev.clientY) ?? undefined;
+        toolActionsRef.current[toolId]?.(pos);
+      }
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   const selectedLayer = project?.layers.find((l) => l.id === selectedId) ?? null;
 
   function updateLayer(id: string, changes: LayerChanges) {
@@ -106,7 +159,7 @@ function App() {
     setProject((p) =>
       p ? { ...p, layers: p.layers.filter((l) => l.id !== id) } : p
     );
-    setSelectedId((current) => (current === id ? null : current));
+    setSelectedIds((prev) => prev.filter((sid) => sid !== id));
     setIsDirty(true);
   }
 
@@ -153,7 +206,7 @@ function App() {
       layers: [background],
       globalAdjustments: { ...DEFAULT_COLOR_ADJUSTMENTS },
     });
-    setSelectedId(null);
+    setSelectedIds([]);
     setFilePath(null);
     setIsDirty(false);
     setShowNewCanvasDialog(false);
@@ -182,7 +235,7 @@ function App() {
       rotation: 0,
     };
     setProject((p) => (p ? { ...p, layers: [...p.layers, layer] } : p));
-    setSelectedId(id);
+    setSelectedIds([id]);
   }
 
   async function handleImportImage() {
@@ -199,11 +252,11 @@ function App() {
 
   function addLayer(layer: Layer) {
     setProject((p) => (p ? { ...p, layers: [...p.layers, layer] } : p));
-    setSelectedId(layer.id);
+    setSelectedIds([layer.id]);
     setIsDirty(true);
   }
 
-  function addTextLayer() {
+  function addTextLayer(pos?: { x: number; y: number }) {
     if (!project) return;
     addLayer({
       id: crypto.randomUUID(),
@@ -212,8 +265,8 @@ function App() {
       visible: true,
       blendMode: "normal",
       text: "Your text",
-      x: 0,
-      y: 0,
+      x: pos?.x ?? 0,
+      y: pos?.y ?? 0,
       rotation: 0,
       fontFamily: fonts.some((f) => f.family === "Impact")
         ? "Impact"
@@ -227,7 +280,7 @@ function App() {
     });
   }
 
-  function addShapeLayer(shapeKind: ShapeKind) {
+  function addShapeLayer(shapeKind: ShapeKind, pos?: { x: number; y: number }) {
     if (!project) return;
     const base = {
       id: crypto.randomUUID(),
@@ -238,13 +291,16 @@ function App() {
       strokeWidth: 4,
     };
     if (shapeKind === "line" || shapeKind === "arrow") {
+      const cx = pos?.x ?? 0;
+      const cy = pos?.y ?? 0;
+      const half = 150 / project.canvasWidth;
       addLayer({
         ...base,
         shapeKind,
-        x1: -150 / project.canvasWidth,
-        y1: 0,
-        x2: 150 / project.canvasWidth,
-        y2: 0,
+        x1: cx - half,
+        y1: cy,
+        x2: cx + half,
+        y2: cy,
         strokeColor: "#000000",
       });
     } else {
@@ -253,8 +309,8 @@ function App() {
       addLayer({
         ...base,
         shapeKind,
-        x: 0,
-        y: 0,
+        x: pos?.x ?? 0,
+        y: pos?.y ?? 0,
         width: normW,
         height: normH,
         rotation: 0,
@@ -299,7 +355,7 @@ function App() {
     if (result) {
       resetProject(result.project);
       setFilePath(result.path);
-      setSelectedId(null);
+      setSelectedIds([]);
       setIsDirty(false);
       setRecentFiles(addRecentFile(result.path, projectDisplayName(result.path)));
     }
@@ -310,7 +366,7 @@ function App() {
     if (result) {
       resetProject(result.project);
       setFilePath(result.path);
-      setSelectedId(null);
+      setSelectedIds([]);
       setIsDirty(false);
       setRecentFiles(addRecentFile(result.path, projectDisplayName(result.path)));
     } else {
@@ -323,7 +379,7 @@ function App() {
   }
 
   function deselectAll() {
-    setSelectedId(null);
+    setSelectedIds([]);
   }
 
   useEffect(() => {
@@ -348,6 +404,7 @@ function App() {
         e.preventDefault();
         return;
       }
+
 
       if (e.key === "n") {
         e.preventDefault();
@@ -476,8 +533,8 @@ function App() {
             {activeLeftTab === "layers" ? (
               <LayersPanel
                 layers={project.layers}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
+                selectedIds={selectedIds}
+                onSelect={(id) => setSelectedIds(id ? [id] : [])}
                 onReorder={reorderLayer}
                 onToggleVisible={toggleLayerVisible}
                 onDelete={deleteLayer}
@@ -487,15 +544,15 @@ function App() {
               />
             ) : (
               <EffectsPanel
-                disabled={!project}
                 onAddText={addTextLayer}
                 onAddShape={addShapeLayer}
                 onImportImage={() => void handleImportImage()}
                 onOpenEmoji={() => setShowEmojiPicker(true)}
+                onToolPointerDown={handleToolPointerDown}
               />
             )}
           </aside>
-          <div className="canvas-area">
+          <div className="canvas-area" ref={canvasAreaRef}>
             <PixiCanvas
               ref={canvasRef}
               canvasWidth={project.canvasWidth}
@@ -503,13 +560,14 @@ function App() {
               layers={project.layers}
               selectedId={selectedId}
               globalAdjustments={project.globalAdjustments}
-              onSelect={setSelectedId}
+              onSelect={(id) => setSelectedIds(id ? [id] : [])}
               onLayerChange={updateLayer}
             />
           </div>
           <aside className="properties-panel">
             <PropertiesPanel
               layer={selectedLayer}
+              selectedCount={selectedIds.length}
               fonts={fonts}
               canvasWidth={project.canvasWidth}
               canvasHeight={project.canvasHeight}
@@ -581,6 +639,11 @@ function App() {
       )}
       {showShortcuts && (
         <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
+      )}
+      {dragVisual && (
+        <div className="drag-ghost" style={{ left: dragVisual.x + 14, top: dragVisual.y - 14 }}>
+          {dragVisual.label}
+        </div>
       )}
     </main>
   );

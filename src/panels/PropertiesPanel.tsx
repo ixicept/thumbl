@@ -15,6 +15,7 @@ import "./PropertiesPanel.css";
 
 interface PropertiesPanelProps {
   layer: Layer | null;
+  selectedCount: number;
   fonts: FontFamily[];
   canvasWidth: number;
   canvasHeight: number;
@@ -38,6 +39,7 @@ function tabsFor(layer: Layer): string[] {
 
 export function PropertiesPanel({
   layer,
+  selectedCount,
   fonts,
   canvasWidth,
   canvasHeight,
@@ -49,6 +51,14 @@ export function PropertiesPanel({
   const set = layer ? (changes: LayerChanges) => onChange(layer.id, changes) : null;
 
   if (!layer) {
+    if (selectedCount > 1) {
+      return (
+        <div className="properties-panel-content">
+          <div className="prop-panel-title">{selectedCount} layers selected</div>
+          <div className="prop-multi-hint">x &nbsp;-&nbsp;&nbsp; y &nbsp;-</div>
+        </div>
+      );
+    }
     return (
       <div className="properties-panel-content">
         <div className="prop-panel-title">Global Color</div>

@@ -43,6 +43,14 @@
   transition: background 0.1s, border-color 0.1s, color 0.1s;
 }
 
+.effects-item:not(:disabled) {
+  cursor: grab;
+}
+
+.effects-item:not(:disabled):active {
+  cursor: grabbing;
+}
+
 .effects-item:hover:not(:disabled) {
   background: #333;
   border-color: #4f9eff;

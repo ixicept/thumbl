@@ -73,6 +73,9 @@ const dragToolRef = useRef<string | null>(null);
   const toolActionsRef = useRef<Record<string, (pos?: { x: number; y: number }) => void>>({});
   const addImageFromPathRef = useRef<(path: string, pos?: { x: number; y: number }) => Promise<void>>(async () => {});
   const deleteSelectedLayersRef = useRef<() => void>(() => {});
+  const clipboardRef = useRef<Layer[]>([]);
+  const copySelectedLayersRef = useRef<() => void>(() => {});
+  const pasteLayersRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     void loadFonts().then(setFonts);
@@ -128,6 +131,8 @@ const dragToolRef = useRef<string | null>(null);
   // Keep refs fresh every render
   addImageFromPathRef.current = addImageFromPath;
   deleteSelectedLayersRef.current = deleteSelectedLayers;
+  copySelectedLayersRef.current = copySelectedLayers;
+  pasteLayersRef.current = pasteLayers;
   toolActionsRef.current = {
     text: (pos) => addTextLayer(pos),
     rect: (pos) => addShapeLayer("rect", pos),
@@ -472,6 +477,33 @@ const dragToolRef = useRef<string | null>(null);
     setSelectedIds([]);
   }
 
+  function copySelectedLayers() {
+    if (!project || selectedIds.length === 0) return;
+    clipboardRef.current = project.layers.filter(
+      (l) => selectedIds.includes(l.id) && l.type !== "fill"
+    );
+  }
+
+  function pasteLayers() {
+    const toPaste = clipboardRef.current;
+    if (!toPaste.length) return;
+    const OFFSET = 0.03;
+    const newLayers: Layer[] = toPaste.map((l) => {
+      const id = crypto.randomUUID();
+      if (l.type === "shape" && (l.shapeKind === "line" || l.shapeKind === "arrow")) {
+        return { ...l, id, x1: (l.x1 ?? 0) + OFFSET, y1: (l.y1 ?? 0) + OFFSET, x2: (l.x2 ?? 0) + OFFSET, y2: (l.y2 ?? 0) + OFFSET };
+      }
+      if (l.type === "image" || l.type === "text" || l.type === "shape") {
+        return { ...l, id, x: (l.x ?? 0) + OFFSET, y: (l.y ?? 0) + OFFSET };
+      }
+      return { ...l, id };
+    });
+    clipboardRef.current = newLayers;
+    setProject((p) => (p ? { ...p, layers: [...p.layers, ...newLayers] } : p));
+    setSelectedIds(newLayers.map((l) => l.id));
+    setIsDirty(true);
+  }
+
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
@@ -519,6 +551,10 @@ const dragToolRef = useRef<string | null>(null);
       } else if (e.key === "e") {
         e.preventDefault();
         if (project) setShowExportDialog(true);
+      } else if (e.key === "c") {
+        if (!isTyping) { e.preventDefault(); copySelectedLayersRef.current(); }
+      } else if (e.key === "v") {
+        if (!isTyping) { e.preventDefault(); pasteLayersRef.current(); }
       } else if (e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         undo();

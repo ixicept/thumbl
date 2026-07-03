@@ -477,6 +477,25 @@ const dragToolRef = useRef<string | null>(null);
     setSelectedIds([]);
   }
 
+  function onMarqueeSelect(rect: { x1: number; y1: number; x2: number; y2: number }) {
+    if (!project) return;
+    const ids = project.layers
+      .filter((l) => {
+        if (l.type === "fill") return false;
+        if (l.type === "shape" && (l.shapeKind === "line" || l.shapeKind === "arrow")) {
+          const inR = (x: number, y: number) => x >= rect.x1 && x <= rect.x2 && y >= rect.y1 && y <= rect.y2;
+          return inR(l.x1 ?? 0, l.y1 ?? 0) || inR(l.x2 ?? 0, l.y2 ?? 0);
+        }
+        if (l.type === "text") {
+          return l.x >= rect.x1 && l.x <= rect.x2 && l.y >= rect.y1 && l.y <= rect.y2;
+        }
+        const x = l.x ?? 0, y = l.y ?? 0, w = l.width ?? 0, h = l.height ?? 0;
+        return (x - w / 2) < rect.x2 && (x + w / 2) > rect.x1 && (y - h / 2) < rect.y2 && (y + h / 2) > rect.y1;
+      })
+      .map((l) => l.id);
+    if (ids.length > 0) setSelectedIds(ids);
+  }
+
   function copySelectedLayers() {
     if (!project || selectedIds.length === 0) return;
     clipboardRef.current = project.layers.filter(
@@ -555,6 +574,8 @@ const dragToolRef = useRef<string | null>(null);
         if (project) setShowExportDialog(true);
       } else if (e.key === "c") {
         if (!isTyping) { e.preventDefault(); copySelectedLayersRef.current(); }
+      } else if (e.key === "x") {
+        if (!isTyping) { e.preventDefault(); copySelectedLayersRef.current(); deleteSelectedLayersRef.current(); }
       } else if (e.key === "v") {
         if (!isTyping) { e.preventDefault(); pasteLayersRef.current(); }
       } else if (e.key === "z" && !e.shiftKey) {
@@ -716,8 +737,10 @@ const dragToolRef = useRef<string | null>(null);
               layers={project.layers}
               selectedId={selectedId}
               globalAdjustments={project.globalAdjustments}
-              onSelect={(id) => setSelectedIds(id ? [id] : [])}
+              onSelect={(id) => { selectionAnchorId.current = id; setSelectedIds(id ? [id] : []); }}
+              onShiftSelect={(id) => { setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]); }}
               onLayerChange={updateLayer}
+              onMarqueeSelect={onMarqueeSelect}
             />
           </div>
           <aside className="properties-panel">

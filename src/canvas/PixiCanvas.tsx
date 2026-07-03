@@ -221,7 +221,9 @@ interface PixiCanvasProps {
   selectedId: string | null;
   globalAdjustments: ColorAdjustments;
   onSelect: (id: string | null) => void;
+  onShiftSelect: (id: string) => void;
   onLayerChange: (id: string, changes: LayerChanges) => void;
+  onMarqueeSelect: (normRect: { x1: number; y1: number; x2: number; y2: number }) => void;
 }
 
 interface LayerEntry {
@@ -243,7 +245,9 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
   selectedId,
   globalAdjustments,
   onSelect,
+  onShiftSelect,
   onLayerChange,
+  onMarqueeSelect,
 }: PixiCanvasProps, ref) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -253,18 +257,32 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
   const layersRef = useRef<Layer[]>(layers);
   const onLayerChangeRef = useRef(onLayerChange);
   const onSelectRef = useRef(onSelect);
+  const onShiftSelectRef = useRef(onShiftSelect);
+  const onMarqueeSelectRef = useRef(onMarqueeSelect);
   const cwRef = useRef(canvasWidth);
   const chRef = useRef(canvasHeight);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const panRef = useRef(pan);
+  const zoomRef = useRef(zoom);
   const [isPanning, setIsPanning] = useState(false);
   const [stageReady, setStageReady] = useState(false);
+  const [marqueeBox, setMarqueeBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const isBackgroundClickRef = useRef(false);
+  const suppressNextClickRef = useRef(false);
+  const marqueeIdsRef = useRef<string[]>([]);
+  const selectedIdRef = useRef<string | null>(selectedId);
+  selectedIdRef.current = selectedId;
 
   layersRef.current = layers;
   onLayerChangeRef.current = onLayerChange;
   onSelectRef.current = onSelect;
+  onShiftSelectRef.current = onShiftSelect;
+  onMarqueeSelectRef.current = onMarqueeSelect;
   cwRef.current = canvasWidth;
   chRef.current = canvasHeight;
+  panRef.current = pan;
+  zoomRef.current = zoom;
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -293,36 +311,125 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
     const viewport = viewportRef.current;
     if (!viewport) return;
 
+    function resetBackgroundClick() { isBackgroundClickRef.current = false; }
+    viewport.addEventListener("pointerdown", resetBackgroundClick, { capture: true });
+
     function handlePointerDown(e: PointerEvent) {
-      if (e.button !== 1) return;
-      e.preventDefault();
+      if (e.button === 1) {
+        e.preventDefault();
+        let lastX = e.clientX;
+        let lastY = e.clientY;
+        function handlePointerMove(ev: PointerEvent) {
+          const dx = ev.clientX - lastX;
+          const dy = ev.clientY - lastY;
+          lastX = ev.clientX;
+          lastY = ev.clientY;
+          setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+        }
+        function handlePointerUp() {
+          window.removeEventListener("pointermove", handlePointerMove);
+          window.removeEventListener("pointerup", handlePointerUp);
+          viewport!.style.cursor = "";
+          setIsPanning(false);
+        }
+        viewport!.style.cursor = "grabbing";
+        setIsPanning(true);
+        window.addEventListener("pointermove", handlePointerMove);
+        window.addEventListener("pointerup", handlePointerUp);
+      } else if (e.button === 0 && isBackgroundClickRef.current) {
+        const startX = e.clientX;
+        const startY = e.clientY;
+        let marqueeing = false;
 
-      let lastX = e.clientX;
-      let lastY = e.clientY;
+        function toNorm(clientX: number, clientY: number) {
+          const vpRect = viewport!.getBoundingClientRect();
+          const cx = vpRect.left + vpRect.width / 2;
+          const cy = vpRect.top + vpRect.height / 2;
+          return {
+            x: (clientX - cx - panRef.current.x) / zoomRef.current / cwRef.current,
+            y: (clientY - cy - panRef.current.y) / zoomRef.current / chRef.current,
+          };
+        }
 
-      function handlePointerMove(ev: PointerEvent) {
-        const dx = ev.clientX - lastX;
-        const dy = ev.clientY - lastY;
-        lastX = ev.clientX;
-        lastY = ev.clientY;
-        setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+        function applyMarqueeOutlines(normRect: { x1: number; y1: number; x2: number; y2: number }) {
+          const newIds = layersRef.current.filter((l) => layerInRect(l, normRect)).map((l) => l.id);
+          const prevIds = marqueeIdsRef.current;
+          const cw = cwRef.current;
+          const ch = chRef.current;
+          for (const id of prevIds) {
+            if (!newIds.includes(id) && id !== selectedIdRef.current) {
+              entriesRef.current.get(id)?.outline.clear();
+            }
+          }
+          for (const id of newIds) {
+            if (!prevIds.includes(id) && id !== selectedIdRef.current) {
+              const entry = entriesRef.current.get(id);
+              const layer = layersRef.current.find((l) => l.id === id);
+              if (entry && layer && layer.type !== "fill" &&
+                  !(layer.type === "shape" && (layer.shapeKind === "line" || layer.shapeKind === "arrow"))) {
+                const pw = layer.type === "text" ? entry.content.width : toPixW(boxRect(layer).width, cw);
+                const ph = layer.type === "text" ? entry.content.height : toPixH(boxRect(layer).height, ch);
+                entry.outline.clear();
+                entry.outline.rect(0, 0, pw, ph).stroke({ width: 1, color: SELECT_COLOR });
+              }
+            }
+          }
+          marqueeIdsRef.current = newIds;
+        }
+
+        function clearMarqueeOutlines() {
+          for (const id of marqueeIdsRef.current) {
+            if (id !== selectedIdRef.current) {
+              entriesRef.current.get(id)?.outline.clear();
+            }
+          }
+          marqueeIdsRef.current = [];
+        }
+
+        function onMove(ev: PointerEvent) {
+          if (!marqueeing) {
+            if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+            marqueeing = true;
+          }
+          setMarqueeBox({
+            left: Math.min(startX, ev.clientX),
+            top: Math.min(startY, ev.clientY),
+            width: Math.abs(ev.clientX - startX),
+            height: Math.abs(ev.clientY - startY),
+          });
+          const n1 = toNorm(startX, startY);
+          const n2 = toNorm(ev.clientX, ev.clientY);
+          applyMarqueeOutlines({
+            x1: Math.min(n1.x, n2.x), y1: Math.min(n1.y, n2.y),
+            x2: Math.max(n1.x, n2.x), y2: Math.max(n1.y, n2.y),
+          });
+        }
+        function onUp(ev: PointerEvent) {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+          if (!marqueeing) return;
+          clearMarqueeOutlines();
+          setMarqueeBox(null);
+          suppressNextClickRef.current = true;
+          const n1 = toNorm(startX, startY);
+          const n2 = toNorm(ev.clientX, ev.clientY);
+          onMarqueeSelectRef.current({
+            x1: Math.min(n1.x, n2.x),
+            y1: Math.min(n1.y, n2.y),
+            x2: Math.max(n1.x, n2.x),
+            y2: Math.max(n1.y, n2.y),
+          });
+        }
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
       }
-
-      function handlePointerUp() {
-        window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", handlePointerUp);
-        viewport!.style.cursor = "";
-        setIsPanning(false);
-      }
-
-      viewport!.style.cursor = "grabbing";
-      setIsPanning(true);
-      window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", handlePointerUp);
     }
 
     viewport.addEventListener("pointerdown", handlePointerDown);
-    return () => viewport.removeEventListener("pointerdown", handlePointerDown);
+    return () => {
+      viewport.removeEventListener("pointerdown", handlePointerDown);
+      viewport.removeEventListener("pointerdown", resetBackgroundClick, { capture: true });
+    };
   }, []);
 
   useEffect(() => {
@@ -351,6 +458,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
         stage.hitArea = app.screen;
         stage.on("pointerdown", (e) => {
           if (e.button !== 0) return;
+          isBackgroundClickRef.current = true;
           onSelectRef.current(null);
         });
         app.stage.addChild(stage);
@@ -452,7 +560,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
           if (interaction === "box" || interaction === "text") {
             container.eventMode = "static";
             container.cursor = "move";
-            attachDragHandlers(container, layer.id, onSelectRef, onLayerChangeRef, layersRef, cwRef, chRef);
+            attachDragHandlers(container, layer.id, onSelectRef, onShiftSelectRef, onLayerChangeRef, layersRef, cwRef, chRef);
             const defs = interaction === "text" ? CORNER_HANDLE_DEFS : BOX_HANDLE_DEFS;
             for (const { type, cursor } of defs) {
               const handle = new Graphics();
@@ -471,7 +579,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
             anchorHandle.eventMode = "static";
             anchorHandle.cursor = "move";
             container.addChild(anchorHandle);
-            attachDragHandlers(anchorHandle, layer.id, onSelectRef, onLayerChangeRef, layersRef, cwRef, chRef);
+            attachDragHandlers(anchorHandle, layer.id, onSelectRef, onShiftSelectRef, onLayerChangeRef, layersRef, cwRef, chRef);
 
             // rotation handle — stem + circle above top-center
             rotHandle = new Graphics();
@@ -711,7 +819,10 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
   }), [pan, zoom, canvasWidth, canvasHeight]);
 
   return (
-    <div ref={viewportRef} className="pixi-canvas-viewport" onClick={(e) => { if (e.target === e.currentTarget) onSelectRef.current(null); }}>
+    <div ref={viewportRef} className="pixi-canvas-viewport" onClick={(e) => {
+      if (suppressNextClickRef.current) { suppressNextClickRef.current = false; return; }
+      if (e.target === e.currentTarget) onSelectRef.current(null);
+    }}>
       <div
         ref={hostRef}
         className="pixi-canvas-host"
@@ -720,9 +831,35 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
           transition: isPanning ? "none" : "transform 0.1s ease-out",
         }}
       />
+      {marqueeBox && (
+        <div style={{
+          position: "fixed",
+          left: marqueeBox.left,
+          top: marqueeBox.top,
+          width: marqueeBox.width,
+          height: marqueeBox.height,
+          border: "1.5px solid #4f9eff",
+          background: "rgba(79, 158, 255, 0.12)",
+          pointerEvents: "none",
+          zIndex: 9998,
+        }} />
+      )}
     </div>
   );
 });
+
+function layerInRect(layer: Layer, rect: { x1: number; y1: number; x2: number; y2: number }): boolean {
+  if (layer.type === "fill") return false;
+  if (layer.type === "shape" && (layer.shapeKind === "line" || layer.shapeKind === "arrow")) {
+    const inR = (x: number, y: number) => x >= rect.x1 && x <= rect.x2 && y >= rect.y1 && y <= rect.y2;
+    return inR(layer.x1 ?? 0, layer.y1 ?? 0) || inR(layer.x2 ?? 0, layer.y2 ?? 0);
+  }
+  if (layer.type === "text") {
+    return layer.x >= rect.x1 && layer.x <= rect.x2 && layer.y >= rect.y1 && layer.y <= rect.y2;
+  }
+  const x = layer.x ?? 0, y = layer.y ?? 0, w = layer.width ?? 0, h = layer.height ?? 0;
+  return (x - w / 2) < rect.x2 && (x + w / 2) > rect.x1 && (y - h / 2) < rect.y2 && (y + h / 2) > rect.y1;
+}
 
 function drawLine(
   g: Graphics,
@@ -758,6 +895,7 @@ function attachDragHandlers(
   container: Container,
   layerId: string,
   onSelectRef: React.MutableRefObject<(id: string | null) => void>,
+  onShiftSelectRef: React.MutableRefObject<(id: string) => void>,
   onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
   layersRef: React.MutableRefObject<Layer[]>,
   cwRef: React.MutableRefObject<number>,
@@ -770,7 +908,8 @@ function attachDragHandlers(
   container.on("pointerdown", (e) => {
     if (e.button !== 0) return;
     e.stopPropagation();
-    onSelectRef.current(layerId);
+    if (e.shiftKey) onShiftSelectRef.current(layerId);
+    else onSelectRef.current(layerId);
     dragging = true;
     startPointer = { x: e.global.x, y: e.global.y };
     const layer = layersRef.current.find((l) => l.id === layerId);

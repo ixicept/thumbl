@@ -120,6 +120,27 @@ async fn remove_background_api(src_path: String, api_key: String) -> Result<Stri
 }
 
 #[tauri::command]
+async fn save_dataurl_to_temp(data_url: String, filename: String) -> Result<String, String> {
+    use base64::Engine;
+    let b64 = data_url.splitn(2, ',').nth(1).ok_or("Invalid data URL")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| e.to_string())?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let ext = std::path::Path::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_string();
+    let temp_path = std::env::temp_dir().join(format!("thumbl_drop_{}.{}", ts, ext));
+    std::fs::write(&temp_path, &bytes).map_err(|e| e.to_string())?;
+    Ok(temp_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 async fn save_image_file(data_url: String, path: String) -> Result<(), String> {
     use base64::Engine;
     let b64 = data_url
@@ -424,6 +445,7 @@ pub fn run() {
             proxy_image,
             download_image_to_temp,
             save_image_file,
+            save_dataurl_to_temp,
             remove_background_api,
             get_bg_model_status,
             download_bg_model,

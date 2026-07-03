@@ -4,6 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { Assets } from "pixi.js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { PixiCanvas, type PixiCanvasHandle } from "./canvas/PixiCanvas";
 import { LayersPanel } from "./panels/LayersPanel";
 import { PropertiesPanel } from "./panels/PropertiesPanel";
@@ -67,13 +68,64 @@ function App() {
   const selectionAnchorId = useRef<string | null>(null);
 const dragToolRef = useRef<string | null>(null);
   const [dragVisual, setDragVisual] = useState<{ label: string; x: number; y: number } | null>(null);
+  const [isDroppingOnCanvas, setIsDroppingOnCanvas] = useState(false);
+  const [fileDragPos, setFileDragPos] = useState<{ x: number; y: number } | null>(null);
   const toolActionsRef = useRef<Record<string, (pos?: { x: number; y: number }) => void>>({});
+  const addImageFromPathRef = useRef<(path: string, pos?: { x: number; y: number }) => Promise<void>>(async () => {});
 
   useEffect(() => {
     void loadFonts().then(setFonts);
   }, []);
 
-  // Keep tool actions fresh so pointer-up handler always calls current functions
+  useEffect(() => {
+    const webview = getCurrentWebviewWindow();
+    const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+
+    const unlistenPromise = webview.onDragDropEvent((event) => {
+      const payload = event.payload;
+      const canvasEl = canvasAreaRef.current;
+      if (!canvasEl) return;
+      const rect = canvasEl.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+
+      const toCss = (pos: { x: number; y: number }) => ({
+        x: pos.x / dpr,
+        y: pos.y / dpr,
+      });
+
+      const inCanvas = (pos: { x: number; y: number }) => {
+        const c = toCss(pos);
+        return c.x >= rect.left && c.x <= rect.right && c.y >= rect.top && c.y <= rect.bottom;
+      };
+
+      if (payload.type === "enter" || payload.type === "over") {
+        const css = toCss(payload.position);
+        const inside = inCanvas(payload.position);
+        setIsDroppingOnCanvas(inside);
+        setFileDragPos(inside ? {
+          x: Math.max(rect.left, Math.min(rect.right, css.x)),
+          y: Math.max(rect.top, Math.min(rect.bottom, css.y)),
+        } : null);
+      } else if (payload.type === "leave") {
+        setIsDroppingOnCanvas(false);
+        setFileDragPos(null);
+      } else if (payload.type === "drop") {
+        setIsDroppingOnCanvas(false);
+        setFileDragPos(null);
+        if (inCanvas(payload.position)) {
+          const css = toCss(payload.position);
+          const pos = canvasRef.current?.screenToNormalized(css.x, css.y) ?? undefined;
+          const paths = (payload.paths as string[]).filter((p) => IMAGE_EXT.test(p));
+          for (const path of paths) void addImageFromPathRef.current(path, pos);
+        }
+      }
+    });
+
+    return () => { void unlistenPromise.then((fn) => fn()); };
+  }, []);
+
+  // Keep refs fresh every render
+  addImageFromPathRef.current = addImageFromPath;
   toolActionsRef.current = {
     text: (pos) => addTextLayer(pos),
     rect: (pos) => addShapeLayer("rect", pos),
@@ -83,6 +135,15 @@ const dragToolRef = useRef<string | null>(null);
     image: () => void handleImportImage(),
     emoji: () => setShowEmojiPicker(true),
   };
+
+  function clampToCanvas(x: number, y: number) {
+    const rect = canvasAreaRef.current?.getBoundingClientRect();
+    if (!rect) return { x, y };
+    return {
+      x: Math.max(rect.left, Math.min(rect.right, x)),
+      y: Math.max(rect.top, Math.min(rect.bottom, y)),
+    };
+  }
 
   function handleToolPointerDown(toolId: string, toolLabel: string, e: React.PointerEvent) {
     const startX = e.clientX;
@@ -96,9 +157,11 @@ const dragToolRef = useRef<string | null>(null);
         if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
         dragging = true;
         dragToolRef.current = toolId;
-        setDragVisual({ label: toolLabel, x: ev.clientX, y: ev.clientY });
+        const c = clampToCanvas(ev.clientX, ev.clientY);
+        setDragVisual({ label: toolLabel, x: c.x, y: c.y });
       } else {
-        setDragVisual((v) => v ? { ...v, x: ev.clientX, y: ev.clientY } : null);
+        const c = clampToCanvas(ev.clientX, ev.clientY);
+        setDragVisual((v) => v ? { ...v, x: c.x, y: c.y } : null);
       }
     }
 
@@ -231,7 +294,7 @@ const dragToolRef = useRef<string | null>(null);
     setShowNewCanvasDialog(false);
   }
 
-  async function addImageFromPath(path: string) {
+  async function addImageFromPath(path: string, pos?: { x: number; y: number }) {
     if (!project) return;
     const texture = await Assets.load(convertFileSrc(path));
     const id = crypto.randomUUID();
@@ -247,8 +310,8 @@ const dragToolRef = useRef<string | null>(null);
       visible: true,
       blendMode: "normal",
       src: path,
-      x: 0,
-      y: 0,
+      x: pos?.x ?? 0,
+      y: pos?.y ?? 0,
       width: normW,
       height: normH,
       rotation: 0,
@@ -256,6 +319,7 @@ const dragToolRef = useRef<string | null>(null);
     setProject((p) => (p ? { ...p, layers: [...p.layers, layer] } : p));
     setSelectedIds([id]);
   }
+
 
   async function handleImportImage() {
     if (!project) return;
@@ -601,7 +665,10 @@ const dragToolRef = useRef<string | null>(null);
               />
             )}
           </aside>
-          <div className="canvas-area" ref={canvasAreaRef}>
+          <div
+            className={`canvas-area${isDroppingOnCanvas ? " canvas-area-drop-target" : ""}`}
+            ref={canvasAreaRef}
+          >
             <PixiCanvas
               ref={canvasRef}
               canvasWidth={project.canvasWidth}
@@ -692,6 +759,11 @@ const dragToolRef = useRef<string | null>(null);
       {dragVisual && (
         <div className="drag-ghost" style={{ left: dragVisual.x + 14, top: dragVisual.y - 14 }}>
           {dragVisual.label}
+        </div>
+      )}
+      {fileDragPos && (
+        <div className="drag-ghost" style={{ left: fileDragPos.x + 14, top: fileDragPos.y - 14 }}>
+          Image
         </div>
       )}
     </main>

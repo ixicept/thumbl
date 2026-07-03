@@ -528,8 +528,10 @@ const dragToolRef = useRef<string | null>(null);
       }
 
       if (e.key === "a" || e.key === "A") {
-        e.preventDefault();
-        if (!isTyping && project) setSelectedIds(project.layers.filter((l) => l.type !== "fill").map((l) => l.id));
+        if (!isTyping && project) {
+          e.preventDefault();
+          setSelectedIds(project.layers.filter((l) => l.type !== "fill").map((l) => l.id));
+        }
         return;
       }
 

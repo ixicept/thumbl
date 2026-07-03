@@ -72,6 +72,7 @@ const dragToolRef = useRef<string | null>(null);
   const [fileDragPos, setFileDragPos] = useState<{ x: number; y: number } | null>(null);
   const toolActionsRef = useRef<Record<string, (pos?: { x: number; y: number }) => void>>({});
   const addImageFromPathRef = useRef<(path: string, pos?: { x: number; y: number }) => Promise<void>>(async () => {});
+  const deleteSelectedLayersRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     void loadFonts().then(setFonts);
@@ -126,6 +127,7 @@ const dragToolRef = useRef<string | null>(null);
 
   // Keep refs fresh every render
   addImageFromPathRef.current = addImageFromPath;
+  deleteSelectedLayersRef.current = deleteSelectedLayers;
   toolActionsRef.current = {
     text: (pos) => addTextLayer(pos),
     rect: (pos) => addShapeLayer("rect", pos),
@@ -480,7 +482,7 @@ const dragToolRef = useRef<string | null>(null);
 
       if (!isTyping && (e.key === "Backspace" || e.key === "Delete") && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        deleteSelectedLayers();
+        deleteSelectedLayersRef.current();
         return;
       }
 

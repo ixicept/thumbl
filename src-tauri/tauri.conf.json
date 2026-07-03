@@ -15,7 +15,8 @@
         "title": "thumbl",
         "width": 800,
         "height": 600,
-        "decorations": false
+        "decorations": false,
+        "fullscreen": true
       }
     ],
     "security": {

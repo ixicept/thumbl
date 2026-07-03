@@ -17,6 +17,7 @@ import { NewCanvasDialog } from "./dialogs/NewCanvasDialog";
 import { ExportDialog } from "./dialogs/ExportDialog";
 import { EmojiPicker } from "./dialogs/EmojiPicker";
 import { ShortcutsDialog } from "./dialogs/ShortcutsDialog";
+import { UnsavedChangesDialog } from "./dialogs/UnsavedChangesDialog";
 import { loadFonts, type FontFamily } from "./fonts";
 import {
   openProject,
@@ -62,6 +63,10 @@ function App() {
   const [isDirty, setIsDirty] = useState(false);
   const [activeLeftTab, setActiveLeftTab] = useState<"layers" | "effects">("layers");
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const isDirtyRef = useRef(isDirty);
+  const handleSaveRef = useRef<() => Promise<void>>(async () => {});
+  isDirtyRef.current = isDirty;
   const isResizingBrowser = useRef(false);
   const canvasRef = useRef<PixiCanvasHandle>(null);
   const canvasAreaRef = useRef<HTMLDivElement>(null);
@@ -128,9 +133,21 @@ const dragToolRef = useRef<string | null>(null);
     return () => { void unlistenPromise.then((fn) => fn()); };
   }, []);
 
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const unlistenPromise = win.onCloseRequested((event) => {
+      if (isDirtyRef.current) {
+        event.preventDefault();
+        setShowUnsavedDialog(true);
+      }
+    });
+    return () => { void unlistenPromise.then((fn) => fn()); };
+  }, []);
+
   // Keep refs fresh every render
   addImageFromPathRef.current = addImageFromPath;
   deleteSelectedLayersRef.current = deleteSelectedLayers;
+  handleSaveRef.current = handleSave;
   copySelectedLayersRef.current = copySelectedLayers;
   pasteLayersRef.current = pasteLayers;
   toolActionsRef.current = {
@@ -818,6 +835,13 @@ const dragToolRef = useRef<string | null>(null);
       )}
       {showShortcuts && (
         <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
+      )}
+      {showUnsavedDialog && (
+        <UnsavedChangesDialog
+          onSave={async () => { setShowUnsavedDialog(false); await handleSaveRef.current(); await getCurrentWindow().destroy(); }}
+          onDiscard={() => { setShowUnsavedDialog(false); void getCurrentWindow().destroy(); }}
+          onCancel={() => setShowUnsavedDialog(false)}
+        />
       )}
       {dragVisual && (
         <div className="drag-ghost" style={{ left: dragVisual.x + 14, top: dragVisual.y - 14 }}>

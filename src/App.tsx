@@ -77,6 +77,7 @@ const dragToolRef = useRef<string | null>(null);
   const [fileDragPos, setFileDragPos] = useState<{ x: number; y: number } | null>(null);
   const toolActionsRef = useRef<Record<string, (pos?: { x: number; y: number }) => void>>({});
   const addImageFromPathRef = useRef<(path: string, pos?: { x: number; y: number }) => Promise<void>>(async () => {});
+  const emojiDropPosRef = useRef<{ x: number; y: number } | null>(null);
   const deleteSelectedLayersRef = useRef<() => void>(() => {});
   const clipboardRef = useRef<Layer[]>([]);
   const copySelectedLayersRef = useRef<() => void>(() => {});
@@ -153,8 +154,8 @@ const dragToolRef = useRef<string | null>(null);
     ellipse: (pos) => addShapeLayer("ellipse", pos),
     line: (pos) => addShapeLayer("line", pos),
     arrow: (pos) => addShapeLayer("arrow", pos),
-    image: () => void handleImportImage(),
-    emoji: () => setShowEmojiPicker(true),
+    image: (pos) => void handleImportImage(pos),
+    emoji: (pos) => { emojiDropPosRef.current = pos ?? null; setShowEmojiPicker(true); },
   };
 
   function clampToCanvas(x: number, y: number) {
@@ -342,16 +343,18 @@ const dragToolRef = useRef<string | null>(null);
   }
 
 
-  async function handleImportImage() {
+  async function handleImportImage(pos?: { x: number; y: number }) {
     if (!project) return;
     const path = await pickImagePath();
-    if (path) await addImageFromPath(path);
+    if (path) await addImageFromPath(path, pos);
   }
 
   async function handleEmojiPick(_emoji: string, twemojiUrl: string) {
     setShowEmojiPicker(false);
+    const pos = emojiDropPosRef.current ?? undefined;
+    emojiDropPosRef.current = null;
     const path = await invoke<string>("download_image_to_temp", { url: twemojiUrl });
-    await addImageFromPath(path);
+    await addImageFromPath(path, pos);
   }
 
   function addLayer(layer: Layer) {

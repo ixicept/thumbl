@@ -92,6 +92,8 @@ const dragToolRef = useRef<string | null>(null);
   const clipboardRef = useRef<Layer[]>([]);
   const copySelectedLayersRef = useRef<() => void>(() => {});
   const pasteLayersRef = useRef<() => void>(() => {});
+  // true while the user's last copy was from inside this app (cleared on window blur)
+  const trustInternalClipboardRef = useRef(false);
 
   useEffect(() => {
     void loadFonts().then(setFonts);
@@ -524,6 +526,7 @@ const dragToolRef = useRef<string | null>(null);
     clipboardRef.current = project.layers.filter(
       (l) => selectedIds.includes(l.id) && l.type !== "fill"
     );
+    trustInternalClipboardRef.current = true;
   }
 
   function pasteLayers() {
@@ -601,8 +604,6 @@ const dragToolRef = useRef<string | null>(null);
         if (!isTyping) { e.preventDefault(); copySelectedLayersRef.current(); }
       } else if (key === "x") {
         if (!isTyping) { e.preventDefault(); copySelectedLayersRef.current(); deleteSelectedLayersRef.current(); }
-      } else if (key === "v") {
-        if (!isTyping) { e.preventDefault(); pasteLayersRef.current(); }
       } else if (key === "z" && !e.shiftKey) {
         e.preventDefault();
         undo();
@@ -615,6 +616,57 @@ const dragToolRef = useRef<string | null>(null);
     return () => window.removeEventListener("keydown", handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, filePath]);
+
+  useEffect(() => {
+    function handlePaste(e: ClipboardEvent) {
+      const target = e.target as HTMLElement;
+      const isTyping =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable;
+      if (isTyping) return;
+
+      const items = Array.from(e.clipboardData?.items ?? []);
+      const imageItem = items.find((item) => item.type.startsWith("image/"));
+      const hasText = items.some((item) => item.type === "text/plain" || item.type === "text/html");
+
+      if (imageItem && !hasText && !trustInternalClipboardRef.current) {
+        e.preventDefault();
+        const blob = imageItem.getAsFile();
+        if (!blob) return;
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+          const dataUrl = evt.target?.result as string;
+          if (!dataUrl) return;
+          const ext = blob.type.split("/")[1] || "png";
+          try {
+            const path = await invoke<string>("save_dataurl_to_temp", {
+              dataUrl,
+              filename: `clipboard.${ext}`,
+            });
+            await addImageFromPathRef.current(path);
+          } catch {
+            // clipboard paste failed silently
+          }
+        };
+        reader.readAsDataURL(blob);
+      } else {
+        e.preventDefault();
+        pasteLayersRef.current();
+      }
+    }
+
+    function handleBlur() {
+      trustInternalClipboardRef.current = false;
+    }
+
+    document.addEventListener("paste", handlePaste);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      document.removeEventListener("paste", handlePaste);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, []);
 
   const projectName = filePath ? projectDisplayName(filePath) : project ? "Untitled Project" : "";
   const title = isDirty && project ? `${projectName} | edited` : projectName;

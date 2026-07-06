@@ -66,7 +66,17 @@ function App() {
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const isDirtyRef = useRef(isDirty);
   const handleSaveRef = useRef<() => Promise<void>>(async () => {});
+  const pendingActionRef = useRef<(() => void) | null>(null);
   isDirtyRef.current = isDirty;
+
+  function guardedAction(action: () => void) {
+    if (isDirtyRef.current) {
+      pendingActionRef.current = action;
+      setShowUnsavedDialog(true);
+    } else {
+      action();
+    }
+  }
   const isResizingBrowser = useRef(false);
   const canvasRef = useRef<PixiCanvasHandle>(null);
   const canvasAreaRef = useRef<HTMLDivElement>(null);
@@ -135,11 +145,7 @@ const dragToolRef = useRef<string | null>(null);
   }, []);
 
   function handleCloseRequest() {
-    if (isDirtyRef.current) {
-      setShowUnsavedDialog(true);
-    } else {
-      void getCurrentWindow().close();
-    }
+    guardedAction(() => void getCurrentWindow().close());
   }
 
   // Keep refs fresh every render
@@ -557,13 +563,15 @@ const dragToolRef = useRef<string | null>(null);
       const ctrl = e.ctrlKey || e.metaKey;
       if (!ctrl) return;
 
+      const key = e.key.toLowerCase();
+
       // Block browser/webview shortcuts that would wipe app state
-      if (["r", "R", "F5", "w", "W", "f", "F", "p", "P", "u", "U"].includes(e.key)) {
+      if (["r", "f5", "w", "f", "p", "u"].includes(key)) {
         e.preventDefault();
         return;
       }
 
-      if (e.key === "a" || e.key === "A") {
+      if (key === "a") {
         if (!isTyping && project) {
           e.preventDefault();
           setSelectedIds(project.layers.filter((l) => l.type !== "fill").map((l) => l.id));
@@ -571,34 +579,34 @@ const dragToolRef = useRef<string | null>(null);
         return;
       }
 
-      if (e.key === "n") {
+      if (key === "n") {
         e.preventDefault();
-        setShowNewCanvasDialog(true);
-      } else if (e.key === "o") {
+        guardedAction(() => setShowNewCanvasDialog(true));
+      } else if (key === "o") {
         e.preventDefault();
-        void handleOpen();
-      } else if (e.key === "s") {
+        guardedAction(() => void handleOpen());
+      } else if (key === "s") {
         e.preventDefault();
         void handleSave();
-      } else if (e.key === "t") {
+      } else if (key === "t") {
         e.preventDefault();
         addTextLayer();
-      } else if (e.key === "b") {
+      } else if (key === "b") {
         e.preventDefault();
         setShowBrowser((v) => !v);
-      } else if (e.key === "e") {
+      } else if (key === "e") {
         e.preventDefault();
         if (project) setShowExportDialog(true);
-      } else if (e.key === "c") {
+      } else if (key === "c") {
         if (!isTyping) { e.preventDefault(); copySelectedLayersRef.current(); }
-      } else if (e.key === "x") {
+      } else if (key === "x") {
         if (!isTyping) { e.preventDefault(); copySelectedLayersRef.current(); deleteSelectedLayersRef.current(); }
-      } else if (e.key === "v") {
+      } else if (key === "v") {
         if (!isTyping) { e.preventDefault(); pasteLayersRef.current(); }
-      } else if (e.key === "z" && !e.shiftKey) {
+      } else if (key === "z" && !e.shiftKey) {
         e.preventDefault();
         undo();
-      } else if (e.key === "y" || (e.key === "z" && e.shiftKey)) {
+      } else if (key === "y" || (key === "z" && e.shiftKey)) {
         e.preventDefault();
         redo();
       }
@@ -622,15 +630,15 @@ const dragToolRef = useRef<string | null>(null);
               {
                 label: "New Canvas...",
                 shortcut: "Ctrl+N",
-                onClick: () => setShowNewCanvasDialog(true),
+                onClick: () => guardedAction(() => setShowNewCanvasDialog(true)),
               },
-              { label: "Open Project...", shortcut: "Ctrl+O", onClick: () => void handleOpen() },
+              { label: "Open Project...", shortcut: "Ctrl+O", onClick: () => guardedAction(() => void handleOpen()) },
 
               { label: "", separator: true, onClick: () => {} },
               ...(recentFiles.length > 0
                 ? recentFiles.map((f) => ({
                     label: f.name,
-                    onClick: () => void handleOpenRecent(f.path),
+                    onClick: () => guardedAction(() => void handleOpenRecent(f.path)),
                   }))
                 : [{ label: "No recent files", disabled: true, onClick: () => {} }]),
               { label: "", separator: true, onClick: () => {} },
@@ -754,6 +762,7 @@ const dragToolRef = useRef<string | null>(null);
               canvasHeight={project.canvasHeight}
               layers={project.layers}
               selectedId={selectedId}
+              selectedIds={selectedIds}
               globalAdjustments={project.globalAdjustments}
               onSelect={(id) => { selectionAnchorId.current = id; setSelectedIds(id ? [id] : []); }}
               onShiftSelect={(id) => { setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]); }}
@@ -810,8 +819,8 @@ const dragToolRef = useRef<string | null>(null);
         <WelcomeScreen
           recentFiles={recentFiles}
           onNewCanvas={() => setShowNewCanvasDialog(true)}
-          onOpen={() => void handleOpen()}
-          onOpenRecent={(path) => void handleOpenRecent(path)}
+          onOpen={() => guardedAction(() => void handleOpen())}
+          onOpenRecent={(path) => guardedAction(() => void handleOpenRecent(path))}
         />
       )}
       {showNewCanvasDialog && (
@@ -839,9 +848,23 @@ const dragToolRef = useRef<string | null>(null);
       )}
       {showUnsavedDialog && (
         <UnsavedChangesDialog
-          onSave={async () => { setShowUnsavedDialog(false); await handleSaveRef.current(); void getCurrentWindow().close(); }}
-          onDiscard={() => { setShowUnsavedDialog(false); void getCurrentWindow().close(); }}
-          onCancel={() => setShowUnsavedDialog(false)}
+          onSave={async () => {
+            setShowUnsavedDialog(false);
+            await handleSaveRef.current();
+            const action = pendingActionRef.current;
+            pendingActionRef.current = null;
+            action?.();
+          }}
+          onDiscard={() => {
+            setShowUnsavedDialog(false);
+            const action = pendingActionRef.current;
+            pendingActionRef.current = null;
+            action?.();
+          }}
+          onCancel={() => {
+            setShowUnsavedDialog(false);
+            pendingActionRef.current = null;
+          }}
         />
       )}
       {dragVisual && (

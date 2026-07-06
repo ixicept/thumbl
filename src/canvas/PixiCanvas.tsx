@@ -219,6 +219,7 @@ interface PixiCanvasProps {
   canvasHeight: number;
   layers: Layer[];
   selectedId: string | null;
+  selectedIds: string[];
   globalAdjustments: ColorAdjustments;
   onSelect: (id: string | null) => void;
   onShiftSelect: (id: string) => void;
@@ -243,6 +244,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
   canvasHeight,
   layers,
   selectedId,
+  selectedIds,
   globalAdjustments,
   onSelect,
   onShiftSelect,
@@ -272,7 +274,10 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
   const suppressNextClickRef = useRef(false);
   const marqueeIdsRef = useRef<string[]>([]);
   const selectedIdRef = useRef<string | null>(selectedId);
+  const selectedIdsRef = useRef<string[]>(selectedIds);
+  const isBatchDraggingRef = useRef(false);
   selectedIdRef.current = selectedId;
+  selectedIdsRef.current = selectedIds;
 
   layersRef.current = layers;
   onLayerChangeRef.current = onLayerChange;
@@ -560,7 +565,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
           if (interaction === "box" || interaction === "text") {
             container.eventMode = "static";
             container.cursor = "move";
-            attachDragHandlers(container, layer.id, onSelectRef, onShiftSelectRef, onLayerChangeRef, layersRef, cwRef, chRef);
+            attachDragHandlers(container, layer.id, onSelectRef, onShiftSelectRef, onLayerChangeRef, layersRef, selectedIdsRef, cwRef, chRef, isBatchDraggingRef, entriesRef);
             const defs = interaction === "text" ? CORNER_HANDLE_DEFS : BOX_HANDLE_DEFS;
             for (const { type, cursor } of defs) {
               const handle = new Graphics();
@@ -579,7 +584,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
             anchorHandle.eventMode = "static";
             anchorHandle.cursor = "move";
             container.addChild(anchorHandle);
-            attachDragHandlers(anchorHandle, layer.id, onSelectRef, onShiftSelectRef, onLayerChangeRef, layersRef, cwRef, chRef);
+            attachDragHandlers(anchorHandle, layer.id, onSelectRef, onShiftSelectRef, onLayerChangeRef, layersRef, selectedIdsRef, cwRef, chRef, isBatchDraggingRef, entriesRef);
 
             // rotation handle — stem + circle above top-center
             rotHandle = new Graphics();
@@ -592,7 +597,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
             hitLine.eventMode = "static";
             hitLine.cursor = "move";
             container.addChild(hitLine);
-            attachLineBodyDragHandlers(hitLine, layer.id, onSelectRef, onLayerChangeRef, layersRef, cwRef, chRef);
+            attachLineBodyDragHandlers(hitLine, layer.id, onSelectRef, onLayerChangeRef, layersRef, selectedIdsRef, cwRef, chRef, isBatchDraggingRef, entriesRef);
             for (const which of ["start", "end"] as const) {
               const handle = new Graphics();
               handle.eventMode = "static";
@@ -693,8 +698,10 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
         const pw = layer.type === "text" ? entry.content.width : toPixW(boxRect(layer).width, cw);
         const ph = layer.type === "text" ? entry.content.height : toPixH(boxRect(layer).height, ch);
 
+        const showSelection = selected && !isBatchDraggingRef.current;
+
         entry.outline.clear();
-        if (selected && (interaction === "box" || interaction === "text")) {
+        if (showSelection && (interaction === "box" || interaction === "text")) {
           entry.outline.rect(0, 0, pw, ph).stroke({ width: 1, color: SELECT_COLOR });
         }
 
@@ -706,7 +713,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
             .circle(x, y, HANDLE_RADIUS)
             .fill(0xffffff)
             .stroke({ width: 1.5, color: SELECT_COLOR });
-          handle.visible = selected;
+          handle.visible = showSelection;
         }
 
         // anchor point handle at center
@@ -719,13 +726,13 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
             .fill(0xffffff)
             .stroke({ width: 1.5, color: SELECT_COLOR });
           entry.anchorHandle.circle(cx, cy, 2.5).fill(SELECT_COLOR);
-          entry.anchorHandle.visible = selected;
+          entry.anchorHandle.visible = showSelection;
         }
 
         // rotation handle — stem line + circle above top-center
         if (entry.rotationHandle) {
           entry.rotationHandle.clear();
-          if (selected) {
+          if (showSelection) {
             const rx = pw / 2;
             entry.rotationHandle
               .moveTo(rx, 0)
@@ -736,7 +743,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
               .fill(0xffffff)
               .stroke({ width: 1.5, color: SELECT_COLOR });
           }
-          entry.rotationHandle.visible = selected;
+          entry.rotationHandle.visible = showSelection;
         }
 
         // --- endpoint handles (converted from normalized to pixels) ---
@@ -848,6 +855,25 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
   );
 });
 
+type MoveStart =
+  | { kind: "box"; x: number; y: number }
+  | { kind: "line"; x1: number; y1: number; x2: number; y2: number };
+
+function layerMoveStart(layer: Layer): MoveStart | null {
+  if (layer.type === "fill") return null;
+  if (layer.type === "shape" && (layer.shapeKind === "line" || layer.shapeKind === "arrow")) {
+    return { kind: "line", x1: layer.x1 ?? 0, y1: layer.y1 ?? 0, x2: layer.x2 ?? 0, y2: layer.y2 ?? 0 };
+  }
+  return { kind: "box", x: layer.x ?? 0, y: layer.y ?? 0 };
+}
+
+function applyMoveDelta(start: MoveStart, dx: number, dy: number): LayerChanges {
+  if (start.kind === "line") {
+    return { x1: start.x1 + dx, y1: start.y1 + dy, x2: start.x2 + dx, y2: start.y2 + dy };
+  }
+  return { x: start.x + dx, y: start.y + dy };
+}
+
 function layerInRect(layer: Layer, rect: { x1: number; y1: number; x2: number; y2: number }): boolean {
   if (layer.type === "fill") return false;
   if (layer.type === "shape" && (layer.shapeKind === "line" || layer.shapeKind === "arrow")) {
@@ -891,6 +917,44 @@ function drawLine(
   g.stroke({ width, color, alpha: hit ? 0.001 : 1, cap: "round" });
 }
 
+function restoreSelectionUI(
+  layerId: string,
+  layers: Layer[],
+  entries: Map<string, LayerEntry>,
+  cw: number,
+  ch: number
+) {
+  const entry = entries.get(layerId);
+  const layer = layers.find((l) => l.id === layerId);
+  if (!entry || !layer) return;
+  const interaction = interactionFor(layer);
+  if (interaction !== "box" && interaction !== "text") return;
+  const pw = layer.type === "text" ? entry.content.width : toPixW(boxRect(layer).width, cw);
+  const ph = layer.type === "text" ? entry.content.height : toPixH(boxRect(layer).height, ch);
+  entry.outline.clear();
+  entry.outline.rect(0, 0, pw, ph).stroke({ width: 1, color: SELECT_COLOR });
+  for (const [type, handle] of entry.handles) {
+    const { x, y } = handlePosition(type, pw, ph);
+    handle.clear();
+    handle.circle(x, y, HANDLE_RADIUS).fill(0xffffff).stroke({ width: 1.5, color: SELECT_COLOR });
+    handle.visible = true;
+  }
+  if (entry.anchorHandle) {
+    const cx = pw / 2, cy = ph / 2;
+    entry.anchorHandle.clear();
+    entry.anchorHandle.circle(cx, cy, HANDLE_RADIUS).fill(0xffffff).stroke({ width: 1.5, color: SELECT_COLOR });
+    entry.anchorHandle.circle(cx, cy, 2.5).fill(SELECT_COLOR);
+    entry.anchorHandle.visible = true;
+  }
+  if (entry.rotationHandle) {
+    const rx = pw / 2;
+    entry.rotationHandle.clear();
+    entry.rotationHandle.moveTo(rx, 0).lineTo(rx, -ROTATION_STEM).stroke({ width: 1, color: SELECT_COLOR });
+    entry.rotationHandle.circle(rx, -ROTATION_STEM, HANDLE_RADIUS).fill(0xffffff).stroke({ width: 1.5, color: SELECT_COLOR });
+    entry.rotationHandle.visible = true;
+  }
+}
+
 function attachDragHandlers(
   container: Container,
   layerId: string,
@@ -898,12 +962,15 @@ function attachDragHandlers(
   onShiftSelectRef: React.MutableRefObject<(id: string) => void>,
   onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
   layersRef: React.MutableRefObject<Layer[]>,
+  selectedIdsRef: React.MutableRefObject<string[]>,
   cwRef: React.MutableRefObject<number>,
-  chRef: React.MutableRefObject<number>
+  chRef: React.MutableRefObject<number>,
+  isBatchDraggingRef: React.MutableRefObject<boolean>,
+  entriesRef: React.MutableRefObject<Map<string, LayerEntry>>
 ) {
   let dragging = false;
   let startPointer = { x: 0, y: 0 };
-  let startPos = { x: 0, y: 0 };
+  let batchStarts: { id: string; start: MoveStart }[] = [];
 
   container.on("pointerdown", (e) => {
     if (e.button !== 0) return;
@@ -912,26 +979,36 @@ function attachDragHandlers(
     else onSelectRef.current(layerId);
     dragging = true;
     startPointer = { x: e.global.x, y: e.global.y };
-    const layer = layersRef.current.find((l) => l.id === layerId);
-    const r = layer ? boxRect(layer) : { x: 0, y: 0 };
-    startPos = { x: r.x, y: r.y };
+    const selIds = selectedIdsRef.current;
+    const idsToMove = selIds.includes(layerId) && selIds.length > 1 ? selIds : [layerId];
+    batchStarts = idsToMove.flatMap((id) => {
+      const layer = layersRef.current.find((l) => l.id === id);
+      const start = layer ? layerMoveStart(layer) : null;
+      return start ? [{ id, start }] : [];
+    });
+    if (batchStarts.length > 1) isBatchDraggingRef.current = true;
   });
 
   const move = (e: { global: { x: number; y: number } }) => {
     if (!dragging) return;
-    const dx = e.global.x - startPointer.x;
-    const dy = e.global.y - startPointer.y;
-    const cw = cwRef.current;
-    const ch = chRef.current;
-    onLayerChangeRef.current(layerId, {
-      x: startPos.x + dx / cw,
-      y: startPos.y + dy / ch,
-    });
+    const dx = (e.global.x - startPointer.x) / cwRef.current;
+    const dy = (e.global.y - startPointer.y) / chRef.current;
+    for (const { id, start } of batchStarts) {
+      onLayerChangeRef.current(id, applyMoveDelta(start, dx, dy));
+    }
   };
 
+  function endDrag() {
+    dragging = false;
+    if (isBatchDraggingRef.current) {
+      isBatchDraggingRef.current = false;
+      restoreSelectionUI(layerId, layersRef.current, entriesRef.current, cwRef.current, chRef.current);
+    }
+  }
+
   container.on("globalpointermove", move);
-  container.on("pointerup", () => (dragging = false));
-  container.on("pointerupoutside", () => (dragging = false));
+  container.on("pointerup", endDrag);
+  container.on("pointerupoutside", endDrag);
 }
 
 function attachResizeHandlers(
@@ -1024,12 +1101,15 @@ function attachLineBodyDragHandlers(
   onSelectRef: React.MutableRefObject<(id: string | null) => void>,
   onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
   layersRef: React.MutableRefObject<Layer[]>,
+  selectedIdsRef: React.MutableRefObject<string[]>,
   cwRef: React.MutableRefObject<number>,
-  chRef: React.MutableRefObject<number>
+  chRef: React.MutableRefObject<number>,
+  isBatchDraggingRef: React.MutableRefObject<boolean>,
+  entriesRef: React.MutableRefObject<Map<string, LayerEntry>>
 ) {
   let dragging = false;
   let startPointer = { x: 0, y: 0 };
-  let s = { x1: 0, y1: 0, x2: 0, y2: 0 };
+  let batchStarts: { id: string; start: MoveStart }[] = [];
 
   target.on("pointerdown", (e) => {
     if (e.button !== 0) return;
@@ -1037,34 +1117,36 @@ function attachLineBodyDragHandlers(
     onSelectRef.current(layerId);
     dragging = true;
     startPointer = { x: e.global.x, y: e.global.y };
-    const layer = layersRef.current.find((l) => l.id === layerId);
-    if (layer?.type === "shape") {
-      s = {
-        x1: layer.x1 ?? 0,
-        y1: layer.y1 ?? 0,
-        x2: layer.x2 ?? 0,
-        y2: layer.y2 ?? 0,
-      };
-    }
+    const selIds = selectedIdsRef.current;
+    const idsToMove = selIds.includes(layerId) && selIds.length > 1 ? selIds : [layerId];
+    batchStarts = idsToMove.flatMap((id) => {
+      const layer = layersRef.current.find((l) => l.id === id);
+      const start = layer ? layerMoveStart(layer) : null;
+      return start ? [{ id, start }] : [];
+    });
+    if (batchStarts.length > 1) isBatchDraggingRef.current = true;
   });
 
   const move = (e: { global: { x: number; y: number } }) => {
     if (!dragging) return;
-    const cw = cwRef.current;
-    const ch = chRef.current;
-    const dx = (e.global.x - startPointer.x) / cw;
-    const dy = (e.global.y - startPointer.y) / ch;
-    onLayerChangeRef.current(layerId, {
-      x1: s.x1 + dx,
-      y1: s.y1 + dy,
-      x2: s.x2 + dx,
-      y2: s.y2 + dy,
-    });
+    const dx = (e.global.x - startPointer.x) / cwRef.current;
+    const dy = (e.global.y - startPointer.y) / chRef.current;
+    for (const { id, start } of batchStarts) {
+      onLayerChangeRef.current(id, applyMoveDelta(start, dx, dy));
+    }
   };
 
+  function endDrag() {
+    dragging = false;
+    if (isBatchDraggingRef.current) {
+      isBatchDraggingRef.current = false;
+      restoreSelectionUI(layerId, layersRef.current, entriesRef.current, cwRef.current, chRef.current);
+    }
+  }
+
   target.on("globalpointermove", move);
-  target.on("pointerup", () => (dragging = false));
-  target.on("pointerupoutside", () => (dragging = false));
+  target.on("pointerup", endDrag);
+  target.on("pointerupoutside", endDrag);
 }
 
 function attachEndpointHandlers(

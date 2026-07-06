@@ -55,7 +55,6 @@ export function PropertiesPanel({
       return (
         <div className="properties-panel-content">
           <div className="prop-panel-title">{selectedCount} layers selected</div>
-          <div className="prop-multi-hint">x &nbsp;-&nbsp;&nbsp; y &nbsp;-</div>
         </div>
       );
     }

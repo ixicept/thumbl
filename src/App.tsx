@@ -133,16 +133,13 @@ const dragToolRef = useRef<string | null>(null);
     return () => { void unlistenPromise.then((fn) => fn()); };
   }, []);
 
-  useEffect(() => {
-    const win = getCurrentWindow();
-    const unlistenPromise = win.onCloseRequested((event) => {
-      if (isDirtyRef.current) {
-        event.preventDefault();
-        setShowUnsavedDialog(true);
-      }
-    });
-    return () => { void unlistenPromise.then((fn) => fn()); };
-  }, []);
+  function handleCloseRequest() {
+    if (isDirtyRef.current) {
+      setShowUnsavedDialog(true);
+    } else {
+      void getCurrentWindow().close();
+    }
+  }
 
   // Keep refs fresh every render
   addImageFromPathRef.current = addImageFromPath;
@@ -614,6 +611,7 @@ const dragToolRef = useRef<string | null>(null);
   return (
     <main className="app">
       <MenuBar
+        onClose={handleCloseRequest}
         menus={[
           {
             label: "File",
@@ -838,8 +836,8 @@ const dragToolRef = useRef<string | null>(null);
       )}
       {showUnsavedDialog && (
         <UnsavedChangesDialog
-          onSave={async () => { setShowUnsavedDialog(false); await handleSaveRef.current(); await getCurrentWindow().destroy(); }}
-          onDiscard={() => { setShowUnsavedDialog(false); void getCurrentWindow().destroy(); }}
+          onSave={async () => { setShowUnsavedDialog(false); await handleSaveRef.current(); void getCurrentWindow().close(); }}
+          onDiscard={() => { setShowUnsavedDialog(false); void getCurrentWindow().close(); }}
           onCancel={() => setShowUnsavedDialog(false)}
         />
       )}

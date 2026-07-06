@@ -12,11 +12,12 @@ export interface MenuItem {
 
 interface MenuBarProps {
   menus: { label: string; items: MenuItem[] }[];
+  onClose?: () => void;
 }
 
-export function MenuBar({ menus }: MenuBarProps) {
+export function MenuBar({ menus, onClose }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
-  const [isMaximized, setIsMaximized] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(true);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const win = getCurrentWindow();
 
@@ -114,7 +115,7 @@ export function MenuBar({ menus }: MenuBarProps) {
             </svg>
           )}
         </button>
-        <button className="wc-btn wc-btn-close" onClick={() => void win.close()} title="Close">
+        <button className="wc-btn wc-btn-close" onClick={() => onClose ? onClose() : void win.close()} title="Close">
           <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
             <line x1="0" y1="0" x2="10" y2="10"/><line x1="10" y1="0" x2="0" y2="10"/>
           </svg>

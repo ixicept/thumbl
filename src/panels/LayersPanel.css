@@ -6,6 +6,25 @@
   overflow-y: auto;
 }
 
+.layers-merge-btn {
+  width: 100%;
+  padding: 0.45em 0.75em;
+  margin-bottom: 0.6em;
+  background: #1e2d3f;
+  border: 1px solid #4f9eff;
+  border-radius: 6px;
+  color: #4f9eff;
+  font-size: 0.82em;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.layers-merge-btn:hover {
+  background: #263d54;
+}
+
 .layers-panel-empty {
   font-size: 0.85em;
   color: #777;

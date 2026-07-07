@@ -5,6 +5,7 @@ import {
   ColorMatrixFilter,
   Container,
   Graphics,
+  RenderTexture,
   Sprite,
   Text,
   TextStyle,
@@ -211,6 +212,7 @@ function buildColorFilter(adj: ColorAdjustments): ColorMatrixFilter | null {
 
 export interface PixiCanvasHandle {
   exportImage(format: "png" | "jpeg", quality?: number): Promise<string>;
+  mergeLayersToImage(layerIds: string[]): Promise<{ dataUrl: string; x: number; y: number; width: number; height: number } | null>;
   screenToNormalized(clientX: number, clientY: number): { x: number; y: number } | null;
 }
 
@@ -811,6 +813,89 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
       for (const n of hidden) n.visible = true;
 
       return dataUrl;
+    },
+    async mergeLayersToImage(layerIds: string[]): Promise<{ dataUrl: string; x: number; y: number; width: number; height: number } | null> {
+      const app = appRef.current;
+      const stage = stageRef.current;
+      if (!app || !stage) return null;
+      const cw = cwRef.current;
+      const ch = chRef.current;
+
+      // Compute AABB of merged layers in pixel space
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+      function expand(corners: [number, number][]) {
+        for (const [x, y] of corners) {
+          minX = Math.min(minX, x); minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+        }
+      }
+
+      function rotCorners(cx: number, cy: number, hw: number, hh: number, rot: number): [number, number][] {
+        return ([[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]] as [number, number][]).map(
+          ([x, y]) => [cx + x * Math.cos(rot) - y * Math.sin(rot), cy + x * Math.sin(rot) + y * Math.cos(rot)] as [number, number]
+        );
+      }
+
+      for (const id of layerIds) {
+        const layer = layersRef.current.find((l) => l.id === id);
+        if (!layer) continue;
+        if (layer.type === "image") {
+          expand(rotCorners(toPixX(layer.x, cw), toPixY(layer.y, ch), toPixW(layer.width, cw) / 2, toPixH(layer.height, ch) / 2, layer.rotation));
+        } else if (layer.type === "text") {
+          const entry = entriesRef.current.get(id);
+          if (entry) expand(rotCorners(toPixX(layer.x, cw), toPixY(layer.y, ch), entry.content.width / 2, entry.content.height / 2, layer.rotation ?? 0));
+        } else if (layer.type === "shape") {
+          if (layer.shapeKind === "line" || layer.shapeKind === "arrow") {
+            expand([[toPixX(layer.x1 ?? 0, cw), toPixY(layer.y1 ?? 0, ch)], [toPixX(layer.x2 ?? 0, cw), toPixY(layer.y2 ?? 0, ch)]]);
+          } else {
+            expand(rotCorners(toPixX(layer.x ?? 0, cw), toPixY(layer.y ?? 0, ch), toPixW(layer.width ?? 0, cw) / 2, toPixH(layer.height ?? 0, ch) / 2, layer.rotation ?? 0));
+          }
+        }
+      }
+      if (!isFinite(minX)) return null;
+
+      const margin = 2;
+      const px = Math.max(0, Math.floor(minX) - margin);
+      const py = Math.max(0, Math.floor(minY) - margin);
+      const bboxW = Math.min(cw, Math.ceil(maxX) + margin) - px;
+      const bboxH = Math.min(ch, Math.ceil(maxY) + margin) - py;
+      if (bboxW <= 0 || bboxH <= 0) return null;
+
+      // Hide layers not being merged and their selection UI
+      const hiddenContainers: Container[] = [];
+      for (const [id, entry] of entriesRef.current) {
+        if (!layerIds.includes(id) && entry.container.visible) {
+          entry.container.visible = false;
+          hiddenContainers.push(entry.container);
+        }
+      }
+      const hiddenUI: Graphics[] = [];
+      for (const id of layerIds) {
+        const entry = entriesRef.current.get(id);
+        if (!entry) continue;
+        const nodes = [entry.outline, ...Array.from(entry.handles.values()), entry.anchorHandle, entry.rotationHandle, ...entry.endpointHandles, entry.hitLine]
+          .filter((n): n is Graphics => !!n && n.visible);
+        for (const n of nodes) { n.visible = false; hiddenUI.push(n); }
+      }
+
+      // Shift stage so the bounding box starts at (0,0), render into exact-size texture
+      stage.position.set(-px, -py);
+      const rt = RenderTexture.create({ width: bboxW, height: bboxH });
+      app.renderer.render({ container: app.stage, target: rt });
+      stage.position.set(0, 0);
+
+      const c2d = app.renderer.extract.canvas(rt) as HTMLCanvasElement;
+      const dataUrl = c2d.toDataURL("image/png");
+      rt.destroy(true);
+
+      // Restore hidden layers/UI
+      for (const c of hiddenContainers) c.visible = true;
+      for (const n of hiddenUI) n.visible = true;
+
+      const normX = (px + bboxW / 2) / cw - 0.5;
+      const normY = (py + bboxH / 2) / ch - 0.5;
+      return { dataUrl, x: normX, y: normY, width: bboxW / cw, height: bboxH / ch };
     },
     screenToNormalized(clientX: number, clientY: number) {
       const viewport = viewportRef.current;

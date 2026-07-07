@@ -498,6 +498,50 @@ const dragToolRef = useRef<string | null>(null);
     setIsDirty(true);
   }
 
+  async function mergeLayers() {
+    if (!project || !canvasRef.current) return;
+    const idsToMerge = selectedIds.filter((id) => {
+      const l = project.layers.find((x) => x.id === id);
+      return l && l.type !== "fill";
+    });
+    if (idsToMerge.length < 2) return;
+
+    const result = await canvasRef.current.mergeLayersToImage(idsToMerge);
+    if (!result) return;
+
+    const path = await invoke<string>("save_dataurl_to_temp", { dataUrl: result.dataUrl, filename: "merged.png" });
+
+    const origIndices = new Map(project.layers.map((l, i) => [l.id, i]));
+    const maxIdx = Math.max(...idsToMerge.map((id) => origIndices.get(id) ?? 0));
+    const idsToMergeSet = new Set(idsToMerge);
+
+    const mergedLayer: Layer = {
+      id: crypto.randomUUID(),
+      type: "image",
+      name: "Merged",
+      visible: true,
+      blendMode: "normal",
+      src: path,
+      x: result.x,
+      y: result.y,
+      width: result.width,
+      height: result.height,
+      rotation: 0,
+    };
+
+    setProject((p) => {
+      if (!p) return p;
+      const remaining = p.layers.filter((l) => !idsToMergeSet.has(l.id));
+      const insertAt = remaining.filter((l) => (origIndices.get(l.id) ?? 0) < maxIdx).length;
+      return {
+        ...p,
+        layers: [...remaining.slice(0, insertAt), mergedLayer, ...remaining.slice(insertAt)],
+      };
+    });
+    setSelectedIds([mergedLayer.id]);
+    setIsDirty(true);
+  }
+
   function deselectAll() {
     setSelectedIds([]);
   }
@@ -793,6 +837,7 @@ const dragToolRef = useRef<string | null>(null);
                 onBlendModeChange={changeLayerBlendMode}
                 onColorChange={changeLayerColor}
                 onRename={(id, name) => updateLayer(id, { name })}
+                onMerge={() => void mergeLayers()}
               />
             ) : (
               <EffectsPanel

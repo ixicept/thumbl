@@ -433,6 +433,7 @@ fn run_u2net(model_path: &str, src_path: &str) -> Result<Vec<u8>, String> {
     Ok(buf.into_inner())
 }
 
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

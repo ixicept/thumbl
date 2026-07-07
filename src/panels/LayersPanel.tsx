@@ -66,6 +66,7 @@ interface LayersPanelProps {
   onBlendModeChange: (id: string, blendMode: BlendMode) => void;
   onColorChange: (id: string, color: string) => void;
   onRename: (id: string, name: string) => void;
+  onMerge?: () => void;
 }
 
 export function LayersPanel({
@@ -82,9 +83,16 @@ export function LayersPanel({
   onBlendModeChange,
   onColorChange,
   onRename,
+  onMerge,
 }: LayersPanelProps) {
   const sensors = useSensors(useSensor(PointerSensor));
   const displayLayers = [...layers].reverse();
+
+  const mergeableCount = selectedIds.filter((id) => {
+    const l = layers.find((x) => x.id === id);
+    return l && l.type !== "fill";
+  }).length;
+  const canMerge = mergeableCount >= 2;
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dragDelta, setDragDelta] = useState<{ x: number; y: number } | null>(null);
@@ -132,6 +140,11 @@ export function LayersPanel({
 
   return (
     <div className="layers-panel-content">
+      {canMerge && onMerge && (
+        <button className="layers-merge-btn" onClick={onMerge}>
+          Merge {mergeableCount} layers
+        </button>
+      )}
 {displayLayers.length === 0 && (
         <p className="layers-panel-empty">No layers yet</p>
       )}

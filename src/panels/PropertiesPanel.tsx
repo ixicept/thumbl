@@ -366,6 +366,7 @@ function ColorProps({
 
 const td = (v: number) => parseFloat((v * 100).toFixed(1));
 const fd = (v: number) => v / 100;
+const rnd3 = (v: number) => parseFloat(v.toFixed(3));
 
 function TRow({
   label,
@@ -440,6 +441,11 @@ function TransformProps({
   const height = (layer as { height?: number }).height ?? 0;
   const flipX = (layer as { flipX?: boolean }).flipX ?? false;
   const flipY = (layer as { flipY?: boolean }).flipY ?? false;
+  const hasAnchorSkew = layer.type === "image";
+  const anchorX = (layer as { anchorX?: number }).anchorX ?? 0;
+  const anchorY = (layer as { anchorY?: number }).anchorY ?? 0;
+  const pitch = (layer as { pitch?: number }).pitch ?? 0;
+  const yaw = (layer as { yaw?: number }).yaw ?? 0;
 
   function setW(dv: number) {
     const w = fd(dv);
@@ -452,7 +458,7 @@ function TransformProps({
     else set({ height: h });
   }
 
-  const resetAll = () => set({ x: 0, y: 0, ...(hasSize ? { width: 0.5, height: 0.5 } : {}), rotation: 0, ...(hasFlip ? { flipX: false, flipY: false } : {}) });
+  const resetAll = () => set({ x: 0, y: 0, ...(hasSize ? { width: 0.5, height: 0.5 } : {}), rotation: 0, ...(hasFlip ? { flipX: false, flipY: false } : {}), ...(hasAnchorSkew ? { anchorX: 0, anchorY: 0, pitch: 0, yaw: 0 } : {}) });
 
   return (
     <div className="transform-panel">
@@ -519,6 +525,50 @@ function TransformProps({
             />
             <TNum value={radToDeg(rotation)} min={-360} max={360} step={1} onChange={(v) => set({ rotation: degToRad(v) })} />
           </TRow>
+
+          {hasAnchorSkew && (
+            <>
+              <TRow label="Anchor" onReset={() => set({ anchorX: 0, anchorY: 0, x: x - width * anchorX, y: y - height * anchorY })}>
+                <span className="trow-axis">X</span>
+                <TNum value={td(anchorX)} min={-50} max={50} onChange={(v) => {
+                  const dax = fd(v) - anchorX;
+                  set({ anchorX: fd(v), x: x + width * dax });
+                }} />
+                <span />
+                <span className="trow-axis">Y</span>
+                <TNum value={td(anchorY)} min={-50} max={50} onChange={(v) => {
+                  const day = fd(v) - anchorY;
+                  set({ anchorY: fd(v), y: y + height * day });
+                }} />
+              </TRow>
+              <TRow label="Pitch" onReset={() => set({ pitch: 0 })}>
+                <input
+                  type="range"
+                  className="trow-slider"
+                  style={{ gridColumn: "1 / 5" }}
+                  min={-1.5}
+                  max={1.5}
+                  step={0.001}
+                  value={pitch}
+                  onChange={(e) => set({ pitch: parseFloat(e.target.value) })}
+                />
+                <TNum value={rnd3(pitch)} min={-1.5} max={1.5} step={0.001} onChange={(v) => set({ pitch: v })} />
+              </TRow>
+              <TRow label="Yaw" onReset={() => set({ yaw: 0 })}>
+                <input
+                  type="range"
+                  className="trow-slider"
+                  style={{ gridColumn: "1 / 5" }}
+                  min={-1.5}
+                  max={1.5}
+                  step={0.001}
+                  value={yaw}
+                  onChange={(e) => set({ yaw: parseFloat(e.target.value) })}
+                />
+                <TNum value={rnd3(yaw)} min={-1.5} max={1.5} step={0.001} onChange={(v) => set({ yaw: v })} />
+              </TRow>
+            </>
+          )}
 
           {hasFlip && (
             <TRow label="Flip" onReset={() => set({ flipX: false, flipY: false })}>

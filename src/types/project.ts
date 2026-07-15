@@ -53,6 +53,10 @@ export interface ImageLayer extends BaseLayer {
   rotation: number;
   flipX?: boolean;
   flipY?: boolean;
+  anchorX?: number; // layer-local fraction, -0.5=left edge, 0=center, 0.5=right edge
+  anchorY?: number;
+  pitch?: number;   // skew.y in radians
+  yaw?: number;     // skew.x in radians
 }
 
 /** Always fills the full canvas; not draggable/resizable. */

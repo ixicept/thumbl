@@ -597,15 +597,13 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
               if (interaction === "text") {
                 attachTextResizeHandlers(handle, type, layer.id, onLayerChangeRef, layersRef);
               } else {
-                attachResizeHandlers(handle, type, layer.id, onLayerChangeRef, layersRef, cwRef, chRef);
+                attachResizeHandlers(handle, type, layer.id, onLayerChangeRef, layersRef, cwRef, chRef, aspectLockedRef);
               }
             }
-            // center anchor handle — drag moves the layer, same as body
+            // anchor point handle — visual only, interaction handled by HTML overlay
             anchorHandle = new Graphics();
-            anchorHandle.eventMode = "static";
-            anchorHandle.cursor = "move";
+            anchorHandle.visible = false;
             container.addChild(anchorHandle);
-            attachDragHandlers(anchorHandle, layer.id, onSelectRef, onShiftSelectRef, onLayerChangeRef, layersRef, selectedIdsRef, cwRef, chRef, isBatchDraggingRef, entriesRef);
 
             // rotation handle — stem + circle above top-center
             rotHandle = new Graphics();
@@ -659,9 +657,12 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
           sprite.scale.y = layer.flipY ? -Math.abs(sprite.scale.y) : Math.abs(sprite.scale.y);
           sprite.x = layer.flipX ? pw : 0;
           sprite.y = layer.flipY ? ph : 0;
-          entry.container.pivot.set(pw / 2, ph / 2);
+          const ax = layer.anchorX ?? 0;
+          const ay = layer.anchorY ?? 0;
+          entry.container.pivot.set(pw * (0.5 + ax), ph * (0.5 + ay));
           entry.container.position.set(toPixX(layer.x, cw), toPixY(layer.y, ch));
           entry.container.rotation = layer.rotation;
+          entry.container.skew.set(layer.yaw ?? 0, layer.pitch ?? 0);
         } else if (layer.type === "fill") {
           entry.container.pivot.set(0, 0);
           entry.container.position.set(0, 0);
@@ -746,17 +747,9 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
           }
         }
 
-        // anchor point handle at center
+        // anchor handle is rendered by the HTML overlay; keep PixiJS object hidden
         if (entry.anchorHandle) {
-          const cx = pw / 2;
-          const cy = ph / 2;
-          entry.anchorHandle.clear();
-          entry.anchorHandle
-            .circle(cx, cy, HANDLE_RADIUS)
-            .fill(0xffffff)
-            .stroke({ width: 1.5, color: SELECT_COLOR });
-          entry.anchorHandle.circle(cx, cy, 2.5).fill(SELECT_COLOR);
-          entry.anchorHandle.visible = showSelection;
+          entry.anchorHandle.visible = false;
         }
 
         // rotation handle — HTML overlay handles box layers; PixiJS only for text
@@ -976,11 +969,13 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
         const nh = layer.type === "image" ? layer.height : (layer.height ?? 0);
         const rot = layer.type === "image" ? layer.rotation : (layer.rotation ?? 0);
 
+        const ax = layer.type === "image" ? (layer.anchorX ?? 0) : 0;
+        const ay = layer.type === "image" ? (layer.anchorY ?? 0) : 0;
         const w = nw * canvasWidth * zoom;
         const h = nh * canvasHeight * zoom;
-        const cx = vpW / 2 + pan.x + nx * canvasWidth * zoom;
-        const cy = vpH / 2 + pan.y + ny * canvasHeight * zoom;
-        const HR = HANDLE_RADIUS;
+        const cx = vpW / 2 + pan.x + (nx - nw * ax) * canvasWidth * zoom;
+        const cy = vpH / 2 + pan.y + (ny - nh * ay) * canvasHeight * zoom;
+        const HR = Math.max(4, Math.min(HANDLE_RADIUS, Math.min(w, h) * 0.05));
         const showHandles = layer.id === selectedId;
         const layerId = layer.id;
 
@@ -993,23 +988,79 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
             const startY = e.clientY;
             const snap = layersRef.current.find((l) => l.id === layerId);
             if (!snap) return;
-            const start = boxRect(snap);
-            const startTL = { x: start.x - start.width / 2, y: start.y - start.height / 2, width: start.width, height: start.height };
             const cw = cwRef.current;
             const ch = chRef.current;
             const z = zoomRef.current;
-            const onMove = (ev: PointerEvent) => {
-              const dx = (ev.clientX - startX) / (cw * z);
-              const dy = (ev.clientY - startY) / (ch * z);
-              const r = computeResize(type, dx, dy, startTL, aspectLockedRef.current);
-              onLayerChangeRef.current(layerId, { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width, height: r.height });
-            };
-            const onUp = () => {
-              document.removeEventListener("pointermove", onMove);
-              document.removeEventListener("pointerup", onUp);
-            };
-            document.addEventListener("pointermove", onMove);
-            document.addEventListener("pointerup", onUp);
+
+            if (snap.type === "image") {
+              // Anchor-based resize: anchor world position (snap.x, snap.y) stays fixed.
+              // Each handle moves one edge; the anchor determines how far that edge is from
+              // the pivot, so the scale factor depends on (0.5 ± anchorOffset).
+              const startW = snap.width;
+              const startH = snap.height;
+              const iax = snap.anchorX ?? 0;
+              const iay = snap.anchorY ?? 0;
+              const pivotX = snap.x;
+              const pivotY = snap.y;
+              const AR = startW / startH;
+
+              const onMove = (ev: PointerEvent) => {
+                const dx = (ev.clientX - startX) / (cw * z);
+                const dy = (ev.clientY - startY) / (ch * z);
+
+                // Width: left handle shrinks (dx>0 = moving right), right expands
+                let newW = startW;
+                if (type === "l" || type === "tl" || type === "bl") {
+                  const f = 0.5 + iax;
+                  if (f > 0.001) newW = Math.max(0.01, startW - dx / f);
+                } else if (type === "r" || type === "tr" || type === "br") {
+                  const f = 0.5 - iax;
+                  if (f > 0.001) newW = Math.max(0.01, startW + dx / f);
+                }
+
+                // Height: top handle shrinks (dy>0 = moving down), bottom expands
+                let newH = startH;
+                if (type === "t" || type === "tl" || type === "tr") {
+                  const f = 0.5 + iay;
+                  if (f > 0.001) newH = Math.max(0.01, startH - dy / f);
+                } else if (type === "b" || type === "bl" || type === "br") {
+                  const f = 0.5 - iay;
+                  if (f > 0.001) newH = Math.max(0.01, startH + dy / f);
+                }
+
+                if (aspectLockedRef.current && startW > 0 && startH > 0) {
+                  if (type === "t" || type === "b") {
+                    newW = Math.max(0.01, newH * AR);
+                  } else {
+                    newH = Math.max(0.01, newW / AR);
+                  }
+                }
+
+                onLayerChangeRef.current(layerId, { x: pivotX, y: pivotY, width: newW, height: newH });
+              };
+              const onUp = () => {
+                document.removeEventListener("pointermove", onMove);
+                document.removeEventListener("pointerup", onUp);
+              };
+              document.addEventListener("pointermove", onMove);
+              document.addEventListener("pointerup", onUp);
+            } else {
+              // Shape layers: classic opposite-corner resize
+              const start = boxRect(snap);
+              const startTL = { x: start.x - start.width / 2, y: start.y - start.height / 2, width: start.width, height: start.height };
+              const onMove = (ev: PointerEvent) => {
+                const dx = (ev.clientX - startX) / (cw * z);
+                const dy = (ev.clientY - startY) / (ch * z);
+                const r = computeResize(type, dx, dy, startTL, aspectLockedRef.current);
+                onLayerChangeRef.current(layerId, { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width, height: r.height });
+              };
+              const onUp = () => {
+                document.removeEventListener("pointermove", onMove);
+                document.removeEventListener("pointerup", onUp);
+              };
+              document.addEventListener("pointermove", onMove);
+              document.addEventListener("pointerup", onUp);
+            }
           };
         }
 
@@ -1033,6 +1084,52 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
               const dx = (ev.clientX - startX) / (cw * z);
               const dy = (ev.clientY - startY) / (ch * z);
               onLayerChangeRef.current(layerId, applyMoveDelta(start, dx, dy));
+            };
+            const onUp = () => {
+              document.removeEventListener("pointermove", onMove);
+              document.removeEventListener("pointerup", onUp);
+            };
+            document.addEventListener("pointermove", onMove);
+            document.addEventListener("pointerup", onUp);
+          };
+        }
+
+        function makeAnchorDown() {
+          return (e: React.PointerEvent) => {
+            if (e.button !== 0) return;
+            e.stopPropagation();
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            const snap = layersRef.current.find((l) => l.id === layerId);
+            if (!snap || snap.type !== "image") return;
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const startAnchorX = snap.anchorX ?? 0;
+            const startAnchorY = snap.anchorY ?? 0;
+            const startPosX = snap.x;
+            const startPosY = snap.y;
+            const snapW = snap.width;
+            const snapH = snap.height;
+            const snapRot = snap.rotation;
+            const cw = cwRef.current;
+            const ch = chRef.current;
+            const z = zoomRef.current;
+            const onMove = (ev: PointerEvent) => {
+              // delta in normalized canvas units
+              const dx = (ev.clientX - startX) / (cw * z);
+              const dy = (ev.clientY - startY) / (ch * z);
+              // rotate into layer-local space
+              const cos = Math.cos(-snapRot);
+              const sin = Math.sin(-snapRot);
+              const dlx = dx * cos - dy * sin;
+              const dly = dx * sin + dy * cos;
+              const dax = dlx / snapW;
+              const day = dly / snapH;
+              onLayerChangeRef.current(layerId, {
+                anchorX: startAnchorX + dax,
+                anchorY: startAnchorY + day,
+                x: startPosX + snapW * dax,
+                y: startPosY + snapH * day,
+              });
             };
             const onUp = () => {
               document.removeEventListener("pointermove", onMove);
@@ -1127,6 +1224,35 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
                 <div style={{ ...handleBase, left: -HR, top: -(h / 2 + ROTATION_STEM + HR * 2), cursor: "grab" }} onPointerDown={makeRotationDown()} />
               </div>
             )}
+            {/* Anchor handle — same size as the resize handles */}
+            {showHandles && layer.type === "image" && (() => {
+              const HA = HR;
+              const margin = Math.max(2, HA * 0.3);
+              const apx = vpW / 2 + pan.x + nx * canvasWidth * zoom;
+              const apy = vpH / 2 + pan.y + ny * canvasHeight * zoom;
+              return (
+                <div
+                  style={{
+                    position: "absolute",
+                    left: apx - HA,
+                    top: apy - HA,
+                    width: HA * 2,
+                    height: HA * 2,
+                    borderRadius: "50%",
+                    background: "#ffffff",
+                    border: "1.5px solid #4f9eff",
+                    boxSizing: "border-box",
+                    cursor: "crosshair",
+                    pointerEvents: "all",
+                    overflow: "hidden",
+                  }}
+                  onPointerDown={makeAnchorDown()}
+                >
+                  <div style={{ position: "absolute", left: margin, right: margin, top: "calc(50% - 0.75px)", height: "1.5px", background: "#4f9eff", pointerEvents: "none" }} />
+                  <div style={{ position: "absolute", top: margin, bottom: margin, left: "calc(50% - 0.75px)", width: "1.5px", background: "#4f9eff", pointerEvents: "none" }} />
+                </div>
+              );
+            })()}
           </React.Fragment>
         );
       })}
@@ -1225,11 +1351,7 @@ function restoreSelectionUI(
     }
   }
   if (entry.anchorHandle) {
-    const cx = pw / 2, cy = ph / 2;
-    entry.anchorHandle.clear();
-    entry.anchorHandle.circle(cx, cy, HANDLE_RADIUS).fill(0xffffff).stroke({ width: 1.5, color: SELECT_COLOR });
-    entry.anchorHandle.circle(cx, cy, 2.5).fill(SELECT_COLOR);
-    entry.anchorHandle.visible = true;
+    entry.anchorHandle.visible = false;
   }
   if (entry.rotationHandle) {
     if (interaction === "box") {
@@ -1243,6 +1365,7 @@ function restoreSelectionUI(
     }
   }
 }
+
 
 function attachDragHandlers(
   container: Container,
@@ -1307,7 +1430,8 @@ function attachResizeHandlers(
   onLayerChangeRef: React.MutableRefObject<(id: string, changes: LayerChanges) => void>,
   layersRef: React.MutableRefObject<Layer[]>,
   cwRef: React.MutableRefObject<number>,
-  chRef: React.MutableRefObject<number>
+  chRef: React.MutableRefObject<number>,
+  aspectLockedRef: React.MutableRefObject<boolean>
 ) {
   let resizing = false;
   let startPointer = { x: 0, y: 0 };

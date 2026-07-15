@@ -369,11 +369,13 @@ function TransformProps({
   canvasHeight: number;
   set: (c: LayerChanges) => void;
 }) {
-  // Normalized space: position ±1.5 range, size 0–2 range, step 0.001
-  const posRange = { min: -1.5, max: 1.5, step: 0.001 };
-  const sizeRange = { min: 0.001, max: 2, step: 0.001 };
+  const toDisplayPos = (v: number) => parseFloat((v * 100).toFixed(1));
+  const fromDisplayPos = (v: number) => v / 100;
+  const toDisplaySize = (v: number) => parseFloat((v * 100).toFixed(1));
+  const fromDisplaySize = (v: number) => v / 100;
 
-  const fmt = (v: number) => parseFloat(v.toFixed(3));
+  const posRange = { min: -100, max: 100, step: 0.1 };
+  const sizeRange = { min: 0.1, max: 100, step: 0.1 };
 
   if (layer.type === "fill") {
     return <p className="prop-note">Background fills the whole canvas.</p>;
@@ -382,10 +384,10 @@ function TransformProps({
   if (layer.type === "shape" && (layer.shapeKind === "line" || layer.shapeKind === "arrow")) {
     return (
       <>
-        <SliderRow label="X1" value={fmt(layer.x1 ?? 0)} {...posRange} onChange={(v) => set({ x1: v })} />
-        <SliderRow label="Y1" value={fmt(layer.y1 ?? 0)} {...posRange} onChange={(v) => set({ y1: v })} />
-        <SliderRow label="X2" value={fmt(layer.x2 ?? 0)} {...posRange} onChange={(v) => set({ x2: v })} />
-        <SliderRow label="Y2" value={fmt(layer.y2 ?? 0)} {...posRange} onChange={(v) => set({ y2: v })} />
+        <SliderRow label="X1" value={toDisplayPos(layer.x1 ?? 0)} {...posRange} onChange={(v) => set({ x1: fromDisplayPos(v) })} />
+        <SliderRow label="Y1" value={toDisplayPos(layer.y1 ?? 0)} {...posRange} onChange={(v) => set({ y1: fromDisplayPos(v) })} />
+        <SliderRow label="X2" value={toDisplayPos(layer.x2 ?? 0)} {...posRange} onChange={(v) => set({ x2: fromDisplayPos(v) })} />
+        <SliderRow label="Y2" value={toDisplayPos(layer.y2 ?? 0)} {...posRange} onChange={(v) => set({ y2: fromDisplayPos(v) })} />
       </>
     );
   }
@@ -397,21 +399,21 @@ function TransformProps({
 
   return (
     <>
-      <SliderRow label="X" value={fmt(x)} {...posRange} onChange={(v) => set({ x: v })} />
-      <SliderRow label="Y" value={fmt(y)} {...posRange} onChange={(v) => set({ y: v })} />
+      <SliderRow label="X" value={toDisplayPos(x)} {...posRange} onChange={(v) => set({ x: fromDisplayPos(v) })} />
+      <SliderRow label="Y" value={toDisplayPos(y)} {...posRange} onChange={(v) => set({ y: fromDisplayPos(v) })} />
       {hasSize && (
         <>
           <SliderRow
-            label="Width"
-            value={fmt((layer as { width?: number }).width ?? 0)}
+            label="W"
+            value={toDisplaySize((layer as { width?: number }).width ?? 0)}
             {...sizeRange}
-            onChange={(v) => set({ width: v })}
+            onChange={(v) => set({ width: fromDisplaySize(v) })}
           />
           <SliderRow
-            label="Height"
-            value={fmt((layer as { height?: number }).height ?? 0)}
+            label="H"
+            value={toDisplaySize((layer as { height?: number }).height ?? 0)}
             {...sizeRange}
-            onChange={(v) => set({ height: v })}
+            onChange={(v) => set({ height: fromDisplaySize(v) })}
           />
         </>
       )}

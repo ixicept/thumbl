@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   Application,
   Assets,
@@ -703,19 +703,22 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
         const showSelection = selected && !isBatchDraggingRef.current;
 
         entry.outline.clear();
-        if (showSelection && (interaction === "box" || interaction === "text")) {
+        // image/shape box outlines are rendered as HTML overlays (not clipped by canvas)
+        if (showSelection && interaction === "text") {
           entry.outline.rect(0, 0, pw, ph).stroke({ width: 1, color: SELECT_COLOR });
         }
 
-        // edge / corner handles — white circles with blue ring
+        // edge / corner handles — HTML overlay handles box layers; PixiJS only for text
         for (const [type, handle] of entry.handles) {
-          const { x, y } = handlePosition(type, pw, ph);
-          handle.clear();
-          handle
-            .circle(x, y, HANDLE_RADIUS)
-            .fill(0xffffff)
-            .stroke({ width: 1.5, color: SELECT_COLOR });
-          handle.visible = showSelection;
+          if (interaction === "box") {
+            handle.clear();
+            handle.visible = false;
+          } else {
+            const { x, y } = handlePosition(type, pw, ph);
+            handle.clear();
+            handle.circle(x, y, HANDLE_RADIUS).fill(0xffffff).stroke({ width: 1.5, color: SELECT_COLOR });
+            handle.visible = showSelection;
+          }
         }
 
         // anchor point handle at center
@@ -731,21 +734,20 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
           entry.anchorHandle.visible = showSelection;
         }
 
-        // rotation handle — stem line + circle above top-center
+        // rotation handle — HTML overlay handles box layers; PixiJS only for text
         if (entry.rotationHandle) {
-          entry.rotationHandle.clear();
-          if (showSelection) {
-            const rx = pw / 2;
-            entry.rotationHandle
-              .moveTo(rx, 0)
-              .lineTo(rx, -ROTATION_STEM)
-              .stroke({ width: 1, color: SELECT_COLOR });
-            entry.rotationHandle
-              .circle(rx, -ROTATION_STEM, HANDLE_RADIUS)
-              .fill(0xffffff)
-              .stroke({ width: 1.5, color: SELECT_COLOR });
+          if (interaction === "box") {
+            entry.rotationHandle.clear();
+            entry.rotationHandle.visible = false;
+          } else {
+            entry.rotationHandle.clear();
+            if (showSelection) {
+              const rx = pw / 2;
+              entry.rotationHandle.moveTo(rx, 0).lineTo(rx, -ROTATION_STEM).stroke({ width: 1, color: SELECT_COLOR });
+              entry.rotationHandle.circle(rx, -ROTATION_STEM, HANDLE_RADIUS).fill(0xffffff).stroke({ width: 1.5, color: SELECT_COLOR });
+            }
+            entry.rotationHandle.visible = showSelection;
           }
-          entry.rotationHandle.visible = showSelection;
         }
 
         // --- endpoint handles (converted from normalized to pixels) ---
@@ -936,6 +938,171 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
           zIndex: 9998,
         }} />
       )}
+      {/* HTML selection outlines + handles — not clipped by PixiJS canvas */}
+      {layers.map((layer) => {
+        if (layer.type === "fill" || layer.type === "text") return null;
+        if (layer.type === "shape" && (layer.shapeKind === "line" || layer.shapeKind === "arrow")) return null;
+        const isSelected = selectedIds.includes(layer.id);
+
+        const vpW = viewportRef.current?.clientWidth ?? 0;
+        const vpH = viewportRef.current?.clientHeight ?? 0;
+        const nx = layer.type === "image" ? layer.x : (layer.x ?? 0);
+        const ny = layer.type === "image" ? layer.y : (layer.y ?? 0);
+        const nw = layer.type === "image" ? layer.width : (layer.width ?? 0);
+        const nh = layer.type === "image" ? layer.height : (layer.height ?? 0);
+        const rot = layer.type === "image" ? layer.rotation : (layer.rotation ?? 0);
+
+        const w = nw * canvasWidth * zoom;
+        const h = nh * canvasHeight * zoom;
+        const cx = vpW / 2 + pan.x + nx * canvasWidth * zoom;
+        const cy = vpH / 2 + pan.y + ny * canvasHeight * zoom;
+        const HR = HANDLE_RADIUS;
+        const showHandles = layer.id === selectedId;
+        const layerId = layer.id;
+
+        function makeResizeDown(type: HandleType) {
+          return (e: React.PointerEvent) => {
+            e.stopPropagation();
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const snap = layersRef.current.find((l) => l.id === layerId);
+            if (!snap) return;
+            const start = boxRect(snap);
+            const startTL = { x: start.x - start.width / 2, y: start.y - start.height / 2, width: start.width, height: start.height };
+            const cw = cwRef.current;
+            const ch = chRef.current;
+            const z = zoomRef.current;
+            const onMove = (ev: PointerEvent) => {
+              const dx = (ev.clientX - startX) / (cw * z);
+              const dy = (ev.clientY - startY) / (ch * z);
+              const r = computeResize(type, dx, dy, startTL);
+              onLayerChangeRef.current(layerId, { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width, height: r.height });
+            };
+            const onUp = () => {
+              document.removeEventListener("pointermove", onMove);
+              document.removeEventListener("pointerup", onUp);
+            };
+            document.addEventListener("pointermove", onMove);
+            document.addEventListener("pointerup", onUp);
+          };
+        }
+
+        function makeMoveDown() {
+          return (e: React.PointerEvent) => {
+            e.stopPropagation();
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            if (e.shiftKey) onShiftSelectRef.current(layerId);
+            else onSelectRef.current(layerId);
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const snap = layersRef.current.find((l) => l.id === layerId);
+            if (!snap) return;
+            const start = layerMoveStart(snap);
+            if (!start) return;
+            const cw = cwRef.current;
+            const ch = chRef.current;
+            const z = zoomRef.current;
+            const onMove = (ev: PointerEvent) => {
+              const dx = (ev.clientX - startX) / (cw * z);
+              const dy = (ev.clientY - startY) / (ch * z);
+              onLayerChangeRef.current(layerId, applyMoveDelta(start, dx, dy));
+            };
+            const onUp = () => {
+              document.removeEventListener("pointermove", onMove);
+              document.removeEventListener("pointerup", onUp);
+            };
+            document.addEventListener("pointermove", onMove);
+            document.addEventListener("pointerup", onUp);
+          };
+        }
+
+        function makeRotationDown() {
+          return (e: React.PointerEvent) => {
+            e.stopPropagation();
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            const vp = viewportRef.current!;
+            const vpRect = vp.getBoundingClientRect();
+            const cx_page = vpRect.left + vp.clientWidth / 2 + pan.x + nx * cwRef.current * zoomRef.current;
+            const cy_page = vpRect.top + vp.clientHeight / 2 + pan.y + ny * chRef.current * zoomRef.current;
+            const startAngle = Math.atan2(e.clientY - cy_page, e.clientX - cx_page);
+            const startRotation = rot;
+            const onMove = (ev: PointerEvent) => {
+              const currentAngle = Math.atan2(ev.clientY - cy_page, ev.clientX - cx_page);
+              onLayerChangeRef.current(layerId, { rotation: startRotation + (currentAngle - startAngle) });
+            };
+            const onUp = () => {
+              document.removeEventListener("pointermove", onMove);
+              document.removeEventListener("pointerup", onUp);
+            };
+            document.addEventListener("pointermove", onMove);
+            document.addEventListener("pointerup", onUp);
+          };
+        }
+
+        const resizeHandles: [HandleType, number, number, string][] = [
+          ["tl", -w / 2 - HR, -h / 2 - HR, "nwse-resize"],
+          ["t",  -HR,          -h / 2 - HR, "ns-resize"],
+          ["tr",  w / 2 - HR, -h / 2 - HR, "nesw-resize"],
+          ["l",  -w / 2 - HR, -HR,          "ew-resize"],
+          ["r",   w / 2 - HR, -HR,          "ew-resize"],
+          ["bl", -w / 2 - HR,  h / 2 - HR, "nesw-resize"],
+          ["b",  -HR,           h / 2 - HR, "ns-resize"],
+          ["br",  w / 2 - HR,  h / 2 - HR, "nwse-resize"],
+        ];
+
+        const handleBase: React.CSSProperties = {
+          position: "absolute",
+          width: HR * 2,
+          height: HR * 2,
+          borderRadius: "50%",
+          background: "#ffffff",
+          border: "1.5px solid #4f9eff",
+          boxSizing: "border-box",
+          pointerEvents: "all",
+        };
+
+        return (
+          <React.Fragment key={layer.id}>
+            {/* Transparent drag area — enables move/select when layer is outside canvas */}
+            <div
+              style={{
+                position: "absolute",
+                left: cx - w / 2, top: cy - h / 2,
+                width: w, height: h,
+                transform: `rotate(${rot}rad)`,
+                transformOrigin: "center",
+                cursor: "move",
+                pointerEvents: "all",
+              }}
+              onPointerDown={makeMoveDown()}
+            />
+            {/* Outline — only when selected */}
+            {isSelected && <div style={{
+              position: "absolute",
+              left: cx - w / 2, top: cy - h / 2,
+              width: w, height: h,
+              border: "1px solid #4f9eff",
+              transform: `rotate(${rot}rad)`,
+              transformOrigin: "center",
+              pointerEvents: "none",
+              boxSizing: "border-box",
+            }} />}
+            {/* Handles — centered at layer center, child coords are layer-local */}
+            {showHandles && (
+              <div style={{ position: "absolute", left: cx, top: cy, width: 0, height: 0, transform: `rotate(${rot}rad)` }}>
+                {resizeHandles.map(([type, lx, ly, cursor]) => (
+                  <div key={type} style={{ ...handleBase, left: lx, top: ly, cursor }} onPointerDown={makeResizeDown(type)} />
+                ))}
+                {/* Rotation stem */}
+                <div style={{ position: "absolute", left: -0.5, top: -(h / 2 + ROTATION_STEM), width: 1, height: ROTATION_STEM, background: "#4f9eff", pointerEvents: "none" }} />
+                {/* Rotation handle */}
+                <div style={{ ...handleBase, left: -HR, top: -(h / 2 + ROTATION_STEM + HR * 2), cursor: "grab" }} onPointerDown={makeRotationDown()} />
+              </div>
+            )}
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 });
@@ -1017,12 +1184,18 @@ function restoreSelectionUI(
   const pw = layer.type === "text" ? entry.content.width : toPixW(boxRect(layer).width, cw);
   const ph = layer.type === "text" ? entry.content.height : toPixH(boxRect(layer).height, ch);
   entry.outline.clear();
-  entry.outline.rect(0, 0, pw, ph).stroke({ width: 1, color: SELECT_COLOR });
+  if (layer.type === "text") {
+    entry.outline.rect(0, 0, pw, ph).stroke({ width: 1, color: SELECT_COLOR });
+  }
   for (const [type, handle] of entry.handles) {
-    const { x, y } = handlePosition(type, pw, ph);
-    handle.clear();
-    handle.circle(x, y, HANDLE_RADIUS).fill(0xffffff).stroke({ width: 1.5, color: SELECT_COLOR });
-    handle.visible = true;
+    if (interaction === "box") {
+      handle.clear(); handle.visible = false;
+    } else {
+      const { x, y } = handlePosition(type, pw, ph);
+      handle.clear();
+      handle.circle(x, y, HANDLE_RADIUS).fill(0xffffff).stroke({ width: 1.5, color: SELECT_COLOR });
+      handle.visible = true;
+    }
   }
   if (entry.anchorHandle) {
     const cx = pw / 2, cy = ph / 2;
@@ -1032,11 +1205,15 @@ function restoreSelectionUI(
     entry.anchorHandle.visible = true;
   }
   if (entry.rotationHandle) {
-    const rx = pw / 2;
-    entry.rotationHandle.clear();
-    entry.rotationHandle.moveTo(rx, 0).lineTo(rx, -ROTATION_STEM).stroke({ width: 1, color: SELECT_COLOR });
-    entry.rotationHandle.circle(rx, -ROTATION_STEM, HANDLE_RADIUS).fill(0xffffff).stroke({ width: 1.5, color: SELECT_COLOR });
-    entry.rotationHandle.visible = true;
+    if (interaction === "box") {
+      entry.rotationHandle.clear(); entry.rotationHandle.visible = false;
+    } else {
+      const rx = pw / 2;
+      entry.rotationHandle.clear();
+      entry.rotationHandle.moveTo(rx, 0).lineTo(rx, -ROTATION_STEM).stroke({ width: 1, color: SELECT_COLOR });
+      entry.rotationHandle.circle(rx, -ROTATION_STEM, HANDLE_RADIUS).fill(0xffffff).stroke({ width: 1.5, color: SELECT_COLOR });
+      entry.rotationHandle.visible = true;
+    }
   }
 }
 

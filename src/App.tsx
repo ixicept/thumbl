@@ -61,6 +61,7 @@ function App() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>(() => getRecentFiles());
   const [isDirty, setIsDirty] = useState(false);
+  const [aspectLocked, setAspectLocked] = useState(true);
   const [activeLeftTab, setActiveLeftTab] = useState<"layers" | "effects">("layers");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
@@ -865,6 +866,7 @@ const dragToolRef = useRef<string | null>(null);
               onShiftSelect={(id) => { setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]); }}
               onLayerChange={updateLayer}
               onMarqueeSelect={onMarqueeSelect}
+              aspectLocked={aspectLocked}
             />
           </div>
           <aside className="properties-panel">
@@ -875,6 +877,8 @@ const dragToolRef = useRef<string | null>(null);
               canvasWidth={project.canvasWidth}
               canvasHeight={project.canvasHeight}
               globalAdjustments={project.globalAdjustments}
+              aspectLocked={aspectLocked}
+              onAspectLockedChange={setAspectLocked}
               onChange={updateLayer}
               onGlobalChange={updateGlobalAdjustments}
             />

@@ -51,6 +51,8 @@ export interface ImageLayer extends BaseLayer {
   width: number;
   height: number;
   rotation: number;
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 /** Always fills the full canvas; not draggable/resizable. */

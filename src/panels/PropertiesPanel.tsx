@@ -20,6 +20,8 @@ interface PropertiesPanelProps {
   canvasWidth: number;
   canvasHeight: number;
   globalAdjustments: ColorAdjustments;
+  aspectLocked: boolean;
+  onAspectLockedChange: (v: boolean) => void;
   onChange: (id: string, changes: LayerChanges) => void;
   onGlobalChange: (adj: ColorAdjustments) => void;
 }
@@ -44,6 +46,8 @@ export function PropertiesPanel({
   canvasWidth,
   canvasHeight,
   globalAdjustments,
+  aspectLocked,
+  onAspectLockedChange,
   onChange,
   onGlobalChange,
 }: PropertiesPanelProps) {
@@ -103,7 +107,7 @@ export function PropertiesPanel({
           />
         )}
         {tab === "Transform" && (
-          <TransformProps layer={layer} canvasWidth={canvasWidth} canvasHeight={canvasHeight} set={set!} />
+          <TransformProps layer={layer} canvasWidth={canvasWidth} canvasHeight={canvasHeight} set={set!} aspectLocked={aspectLocked} onAspectLockedChange={onAspectLockedChange} />
         )}
       </div>
     </div>
@@ -360,71 +364,185 @@ function ColorProps({
 
 // --- Transform tab ---
 
+const td = (v: number) => parseFloat((v * 100).toFixed(1));
+const fd = (v: number) => v / 100;
+
+function TRow({
+  label,
+  children,
+  onReset,
+}: {
+  label: string;
+  children: React.ReactNode;
+  onReset: () => void;
+}) {
+  return (
+    <div className="trow">
+      <span className="trow-label">{label}</span>
+      <div className="trow-controls">{children}</div>
+      <button className="trow-reset" title="Reset" onClick={onReset}>↺</button>
+    </div>
+  );
+}
+
+function TNum({
+  value,
+  min = -100,
+  max = 100,
+  step = 0.1,
+  onChange,
+}: {
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <input
+      type="number"
+      className="trow-num"
+      value={value}
+      min={min}
+      max={max}
+      step={step}
+      onChange={(e) => onChange(num(e.target.value))}
+    />
+  );
+}
+
 function TransformProps({
   layer,
   set,
+  aspectLocked: locked,
+  onAspectLockedChange: setLocked,
 }: {
   layer: Layer;
   canvasWidth: number;
   canvasHeight: number;
   set: (c: LayerChanges) => void;
+  aspectLocked: boolean;
+  onAspectLockedChange: (v: boolean) => void;
 }) {
-  const toDisplayPos = (v: number) => parseFloat((v * 100).toFixed(1));
-  const fromDisplayPos = (v: number) => v / 100;
-  const toDisplaySize = (v: number) => parseFloat((v * 100).toFixed(1));
-  const fromDisplaySize = (v: number) => v / 100;
-
-  const posRange = { min: -100, max: 100, step: 0.1 };
-  const sizeRange = { min: 0.1, max: 100, step: 0.1 };
 
   if (layer.type === "fill") {
     return <p className="prop-note">Background fills the whole canvas.</p>;
   }
 
-  if (layer.type === "shape" && (layer.shapeKind === "line" || layer.shapeKind === "arrow")) {
-    return (
-      <>
-        <SliderRow label="X1" value={toDisplayPos(layer.x1 ?? 0)} {...posRange} onChange={(v) => set({ x1: fromDisplayPos(v) })} />
-        <SliderRow label="Y1" value={toDisplayPos(layer.y1 ?? 0)} {...posRange} onChange={(v) => set({ y1: fromDisplayPos(v) })} />
-        <SliderRow label="X2" value={toDisplayPos(layer.x2 ?? 0)} {...posRange} onChange={(v) => set({ x2: fromDisplayPos(v) })} />
-        <SliderRow label="Y2" value={toDisplayPos(layer.y2 ?? 0)} {...posRange} onChange={(v) => set({ y2: fromDisplayPos(v) })} />
-      </>
-    );
+  const isLine = layer.type === "shape" && (layer.shapeKind === "line" || layer.shapeKind === "arrow");
+  const hasSize = (layer.type === "image" || layer.type === "shape") && !isLine;
+  const hasFlip = layer.type === "image";
+
+  const x = (layer as { x?: number }).x ?? 0;
+  const y = (layer as { y?: number }).y ?? 0;
+  const rotation = (layer as { rotation?: number }).rotation ?? 0;
+  const width = (layer as { width?: number }).width ?? 0;
+  const height = (layer as { height?: number }).height ?? 0;
+  const flipX = (layer as { flipX?: boolean }).flipX ?? false;
+  const flipY = (layer as { flipY?: boolean }).flipY ?? false;
+
+  function setW(dv: number) {
+    const w = fd(dv);
+    if (locked && width > 0) set({ width: w, height: w * (height / width) });
+    else set({ width: w });
+  }
+  function setH(dv: number) {
+    const h = fd(dv);
+    if (locked && height > 0) set({ height: h, width: h * (width / height) });
+    else set({ height: h });
   }
 
-  const x = layer.type === "text" ? layer.x : (layer as { x?: number }).x ?? 0;
-  const y = layer.type === "text" ? layer.y : (layer as { y?: number }).y ?? 0;
-  const rotation = layer.type === "text" ? layer.rotation : (layer as { rotation?: number }).rotation ?? 0;
-  const hasSize = layer.type === "image" || layer.type === "shape";
+  const resetAll = () => set({ x: 0, y: 0, ...(hasSize ? { width: 0.5, height: 0.5 } : {}), rotation: 0, ...(hasFlip ? { flipX: false, flipY: false } : {}) });
 
   return (
-    <>
-      <SliderRow label="X" value={toDisplayPos(x)} {...posRange} onChange={(v) => set({ x: fromDisplayPos(v) })} />
-      <SliderRow label="Y" value={toDisplayPos(y)} {...posRange} onChange={(v) => set({ y: fromDisplayPos(v) })} />
-      {hasSize && (
+    <div className="transform-panel">
+      <div className="transform-header">
+        <span className="transform-title">Transform</span>
+        <button className="trow-reset" title="Reset all" onClick={resetAll}>↺</button>
+      </div>
+
+      {isLine ? (
         <>
-          <SliderRow
-            label="W"
-            value={toDisplaySize((layer as { width?: number }).width ?? 0)}
-            {...sizeRange}
-            onChange={(v) => set({ width: fromDisplaySize(v) })}
-          />
-          <SliderRow
-            label="H"
-            value={toDisplaySize((layer as { height?: number }).height ?? 0)}
-            {...sizeRange}
-            onChange={(v) => set({ height: fromDisplaySize(v) })}
-          />
+          <TRow label="Point 1" onReset={() => set({ x1: 0, y1: 0 })}>
+            <span className="trow-axis">X</span>
+            <TNum value={td((layer as { x1?: number }).x1 ?? 0)} onChange={(v) => set({ x1: fd(v) })} />
+            <span />
+            <span className="trow-axis">Y</span>
+            <TNum value={td((layer as { y1?: number }).y1 ?? 0)} onChange={(v) => set({ y1: fd(v) })} />
+          </TRow>
+          <TRow label="Point 2" onReset={() => set({ x2: 0, y2: 0 })}>
+            <span className="trow-axis">X</span>
+            <TNum value={td((layer as { x2?: number }).x2 ?? 0)} onChange={(v) => set({ x2: fd(v) })} />
+            <span />
+            <span className="trow-axis">Y</span>
+            <TNum value={td((layer as { y2?: number }).y2 ?? 0)} onChange={(v) => set({ y2: fd(v) })} />
+          </TRow>
+        </>
+      ) : (
+        <>
+          {hasSize && (
+            <TRow label="Size" onReset={() => set({ width: 0.5, height: 0.5 })}>
+              <span className="trow-axis">W</span>
+              <TNum value={td(width)} min={0.1} max={100} onChange={setW} />
+              <button
+                className={`trow-lock${locked ? " trow-lock-active" : ""}`}
+                title={locked ? "Unlock ratio" : "Lock ratio"}
+                onClick={() => setLocked(!locked)}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" opacity={locked ? 1 : 0.55}>
+                  <path d="M4.715 6.542 3.343 7.914a3 3 0 1 0 4.243 4.243l1.828-1.829A3 3 0 0 0 8.586 5.5L8 6.086a1.002 1.002 0 0 0-.154.199 2 2 0 0 1 .861 3.337L6.88 11.45a2 2 0 1 1-2.83-2.83l.793-.792a4.018 4.018 0 0 1-.128-1.287z"/>
+                  <path d="M6.586 4.672A3 3 0 0 0 7.414 9.5l.775-.776a2 2 0 0 1-.896-3.346L9.12 3.55a2 2 0 1 1 2.83 2.83l-.793.792c.112.42.155.855.128 1.287l1.372-1.372a3 3 0 1 0-4.243-4.243z"/>
+                </svg>
+              </button>
+              <span className="trow-axis">H</span>
+              <TNum value={td(height)} min={0.1} max={100} onChange={setH} />
+            </TRow>
+          )}
+
+          <TRow label="Position" onReset={() => set({ x: 0, y: 0 })}>
+            <span className="trow-axis">X</span>
+            <TNum value={td(x)} onChange={(v) => set({ x: fd(v) })} />
+            <span />
+            <span className="trow-axis">Y</span>
+            <TNum value={td(y)} onChange={(v) => set({ y: fd(v) })} />
+          </TRow>
+
+          <TRow label="Rotation" onReset={() => set({ rotation: 0 })}>
+            <input
+              type="range"
+              className="trow-slider"
+              style={{ gridColumn: "1 / 5" }}
+              min={-360}
+              max={360}
+              value={radToDeg(rotation)}
+              onChange={(e) => set({ rotation: degToRad(num(e.target.value)) })}
+            />
+            <TNum value={radToDeg(rotation)} min={-360} max={360} step={1} onChange={(v) => set({ rotation: degToRad(v) })} />
+          </TRow>
+
+          {hasFlip && (
+            <TRow label="Flip" onReset={() => set({ flipX: false, flipY: false })}>
+              <div style={{ gridColumn: "1 / 6", display: "flex", gap: 6 }}>
+                <button
+                  className={`trow-flip-btn${flipX ? " trow-flip-active" : ""}`}
+                  title="Flip horizontal"
+                  onClick={() => set({ flipX: !flipX })}
+                >
+                  ↔
+                </button>
+                <button
+                  className={`trow-flip-btn${flipY ? " trow-flip-active" : ""}`}
+                  title="Flip vertical"
+                  onClick={() => set({ flipY: !flipY })}
+                >
+                  ↕
+                </button>
+              </div>
+            </TRow>
+          )}
         </>
       )}
-      <SliderRow
-        label="Rotation°"
-        value={radToDeg(rotation)}
-        min={-180}
-        max={180}
-        onChange={(v) => set({ rotation: degToRad(v) })}
-      />
-    </>
+    </div>
   );
 }
 

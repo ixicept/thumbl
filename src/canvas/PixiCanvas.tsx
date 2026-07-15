@@ -65,7 +65,7 @@ interface Rect {
   height: number;
 }
 
-function computeResize(type: HandleType, dx: number, dy: number, start: Rect): Rect {
+function computeResize(type: HandleType, dx: number, dy: number, start: Rect, locked = false): Rect {
   const left = type.includes("l");
   const right = type.includes("r");
   const top = type.includes("t");
@@ -73,18 +73,34 @@ function computeResize(type: HandleType, dx: number, dy: number, start: Rect): R
 
   let { x, y, width, height } = start;
 
-  if (left) {
-    width = start.width - dx;
-    x = start.x + dx;
-  } else if (right) {
-    width = start.width + dx;
-  }
+  if (left) { width = start.width - dx; x = start.x + dx; }
+  else if (right) { width = start.width + dx; }
 
-  if (top) {
-    height = start.height - dy;
-    y = start.y + dy;
-  } else if (bottom) {
-    height = start.height + dy;
+  if (top) { height = start.height - dy; y = start.y + dy; }
+  else if (bottom) { height = start.height + dy; }
+
+  if (locked && start.width > 0 && start.height > 0) {
+    const ratio = start.width / start.height;
+    const isH = left || right;
+    const isV = top || bottom;
+    if (isH && isV) {
+      // corner: use whichever axis changed more proportionally
+      const scale = Math.abs(width / start.width - 1) >= Math.abs(height / start.height - 1)
+        ? width / start.width
+        : height / start.height;
+      const newW = start.width * scale;
+      const newH = start.height * scale;
+      if (left) x = start.x + start.width - newW;
+      if (top) y = start.y + start.height - newH;
+      width = newW;
+      height = newH;
+    } else if (isH) {
+      height = width / ratio;
+      if (top) y = start.y + start.height - height;
+    } else if (isV) {
+      width = height * ratio;
+      if (left) x = start.x + start.width - width;
+    }
   }
 
   if (width < MIN_SIZE) {
@@ -227,6 +243,7 @@ interface PixiCanvasProps {
   onShiftSelect: (id: string) => void;
   onLayerChange: (id: string, changes: LayerChanges) => void;
   onMarqueeSelect: (normRect: { x1: number; y1: number; x2: number; y2: number }) => void;
+  aspectLocked?: boolean;
 }
 
 interface LayerEntry {
@@ -252,6 +269,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
   onShiftSelect,
   onLayerChange,
   onMarqueeSelect,
+  aspectLocked = false,
 }: PixiCanvasProps, ref) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -265,11 +283,12 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
   const onMarqueeSelectRef = useRef(onMarqueeSelect);
   const cwRef = useRef(canvasWidth);
   const chRef = useRef(canvasHeight);
+  const aspectLockedRef = useRef(aspectLocked);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const panRef = useRef(pan);
   const zoomRef = useRef(zoom);
-  const [isPanning, setIsPanning] = useState(false);
+
   const [stageReady, setStageReady] = useState(false);
   const [marqueeBox, setMarqueeBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const isBackgroundClickRef = useRef(false);
@@ -288,6 +307,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
   onMarqueeSelectRef.current = onMarqueeSelect;
   cwRef.current = canvasWidth;
   chRef.current = canvasHeight;
+  aspectLockedRef.current = aspectLocked;
   panRef.current = pan;
   zoomRef.current = zoom;
 
@@ -337,10 +357,8 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
           window.removeEventListener("pointermove", handlePointerMove);
           window.removeEventListener("pointerup", handlePointerUp);
           viewport!.style.cursor = "";
-          setIsPanning(false);
         }
         viewport!.style.cursor = "grabbing";
-        setIsPanning(true);
         window.addEventListener("pointermove", handlePointerMove);
         window.addEventListener("pointerup", handlePointerUp);
       } else if (e.button === 0 && isBackgroundClickRef.current) {
@@ -459,6 +477,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
           return;
         }
         hostRef.current.appendChild(app.canvas);
+        app.canvas.style.display = "block";
         appRef.current = app;
         const stage = new Container();
         stage.eventMode = "static";
@@ -632,8 +651,14 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
         if (layer.type === "image") {
           const pw = toPixW(layer.width, cw);
           const ph = toPixH(layer.height, ch);
-          (entry.content as Sprite).width = pw;
-          (entry.content as Sprite).height = ph;
+          const sprite = entry.content as Sprite;
+          sprite.width = pw;
+          sprite.height = ph;
+          // Apply flip by negating scale and offsetting position within the container
+          sprite.scale.x = layer.flipX ? -Math.abs(sprite.scale.x) : Math.abs(sprite.scale.x);
+          sprite.scale.y = layer.flipY ? -Math.abs(sprite.scale.y) : Math.abs(sprite.scale.y);
+          sprite.x = layer.flipX ? pw : 0;
+          sprite.y = layer.flipY ? ph : 0;
           entry.container.pivot.set(pw / 2, ph / 2);
           entry.container.position.set(toPixX(layer.x, cw), toPixY(layer.y, ch));
           entry.container.rotation = layer.rotation;
@@ -922,7 +947,6 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
         className="pixi-canvas-host"
         style={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-          transition: isPanning ? "none" : "transform 0.1s ease-out",
         }}
       />
       {marqueeBox && (
@@ -976,7 +1000,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
             const onMove = (ev: PointerEvent) => {
               const dx = (ev.clientX - startX) / (cw * z);
               const dy = (ev.clientY - startY) / (ch * z);
-              const r = computeResize(type, dx, dy, startTL);
+              const r = computeResize(type, dx, dy, startTL, aspectLockedRef.current);
               onLayerChangeRef.current(layerId, { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width, height: r.height });
             };
             const onUp = () => {
@@ -1308,7 +1332,7 @@ function attachResizeHandlers(
       width: start.width,
       height: start.height,
     };
-    const r = computeResize(handleType, dx, dy, startTL);
+    const r = computeResize(handleType, dx, dy, startTL, aspectLockedRef.current);
     // convert result back to center
     onLayerChangeRef.current(layerId, {
       x: r.x + r.width / 2,

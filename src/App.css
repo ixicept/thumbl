@@ -137,6 +137,10 @@ body,
   box-shadow: 0 0 0 1px #3a3a3a;
 }
 
+.pixi-canvas-host canvas {
+  display: block;
+}
+
 .drag-ghost {
   position: fixed;
   background: #2a2a2a;

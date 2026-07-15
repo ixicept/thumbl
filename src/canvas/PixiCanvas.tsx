@@ -986,6 +986,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
 
         function makeResizeDown(type: HandleType) {
           return (e: React.PointerEvent) => {
+            if (e.button !== 0) return;
             e.stopPropagation();
             (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
             const startX = e.clientX;
@@ -1014,6 +1015,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
 
         function makeMoveDown() {
           return (e: React.PointerEvent) => {
+            if (e.button !== 0) return;
             e.stopPropagation();
             (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
             if (e.shiftKey) onShiftSelectRef.current(layerId);
@@ -1043,6 +1045,7 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
 
         function makeRotationDown() {
           return (e: React.PointerEvent) => {
+            if (e.button !== 0) return;
             e.stopPropagation();
             (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
             const vp = viewportRef.current!;

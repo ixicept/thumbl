@@ -57,6 +57,11 @@ export interface ImageLayer extends BaseLayer {
   anchorY?: number;
   pitch?: number;   // skew.y in radians
   yaw?: number;     // skew.x in radians
+  cropLeft?: number;    // 0–1, fraction hidden on left
+  cropRight?: number;   // 0–1, fraction hidden on right
+  cropTop?: number;     // 0–1, fraction hidden on top
+  cropBottom?: number;  // 0–1, fraction hidden on bottom
+  cropSoftness?: number; // 0–1, feather width relative to image
 }
 
 /** Always fills the full canvas; not draggable/resizable. */

@@ -505,6 +505,11 @@ function TransformProps({
   const anchorY = (layer as { anchorY?: number }).anchorY ?? 0;
   const pitch = (layer as { pitch?: number }).pitch ?? 0;
   const yaw = (layer as { yaw?: number }).yaw ?? 0;
+  const cropLeft     = (layer as { cropLeft?:     number }).cropLeft     ?? 0;
+  const cropRight    = (layer as { cropRight?:    number }).cropRight    ?? 0;
+  const cropTop      = (layer as { cropTop?:      number }).cropTop      ?? 0;
+  const cropBottom   = (layer as { cropBottom?:   number }).cropBottom   ?? 0;
+  const cropSoftness = (layer as { cropSoftness?: number }).cropSoftness ?? 0;
 
   function setW(dv: number) {
     const w = fd(dv);
@@ -648,6 +653,56 @@ function TransformProps({
                 </button>
               </div>
             </TRow>
+          )}
+
+          {layer.type === "image" && (
+            <>
+              <div className="transform-header" style={{ marginTop: "0.4em" }}>
+                <span className="transform-title">Crop</span>
+                <button
+                  className="trow-reset"
+                  title="Reset crop"
+                  onClick={() => set({ cropLeft: 0, cropRight: 0, cropTop: 0, cropBottom: 0, cropSoftness: 0 })}
+                >
+                  ↺
+                </button>
+              </div>
+              <TRow label="Left" onReset={() => set({ cropLeft: 0 })}>
+                <input type="range" className="trow-slider" style={{ gridColumn: "1 / 5" }}
+                  min={0} max={1} step={0.001} value={cropLeft}
+                  onChange={(e) => set({ cropLeft: parseFloat(e.target.value) })}
+                />
+                <TNum value={rnd3(cropLeft)} min={0} max={1} step={0.001} onChange={(v) => set({ cropLeft: v })} />
+              </TRow>
+              <TRow label="Right" onReset={() => set({ cropRight: 0 })}>
+                <input type="range" className="trow-slider" style={{ gridColumn: "1 / 5" }}
+                  min={0} max={1} step={0.001} value={cropRight}
+                  onChange={(e) => set({ cropRight: parseFloat(e.target.value) })}
+                />
+                <TNum value={rnd3(cropRight)} min={0} max={1} step={0.001} onChange={(v) => set({ cropRight: v })} />
+              </TRow>
+              <TRow label="Top" onReset={() => set({ cropTop: 0 })}>
+                <input type="range" className="trow-slider" style={{ gridColumn: "1 / 5" }}
+                  min={0} max={1} step={0.001} value={cropTop}
+                  onChange={(e) => set({ cropTop: parseFloat(e.target.value) })}
+                />
+                <TNum value={rnd3(cropTop)} min={0} max={1} step={0.001} onChange={(v) => set({ cropTop: v })} />
+              </TRow>
+              <TRow label="Bottom" onReset={() => set({ cropBottom: 0 })}>
+                <input type="range" className="trow-slider" style={{ gridColumn: "1 / 5" }}
+                  min={0} max={1} step={0.001} value={cropBottom}
+                  onChange={(e) => set({ cropBottom: parseFloat(e.target.value) })}
+                />
+                <TNum value={rnd3(cropBottom)} min={0} max={1} step={0.001} onChange={(v) => set({ cropBottom: v })} />
+              </TRow>
+              <TRow label="Softness" onReset={() => set({ cropSoftness: 0 })}>
+                <input type="range" className="trow-slider" style={{ gridColumn: "1 / 5" }}
+                  min={-100} max={100} step={0.1} value={cropSoftness}
+                  onChange={(e) => set({ cropSoftness: parseFloat(e.target.value) })}
+                />
+                <TNum value={rnd3(cropSoftness)} min={-100} max={100} step={0.1} onChange={(v) => set({ cropSoftness: v })} />
+              </TRow>
+            </>
           )}
         </>
       )}

@@ -4,16 +4,71 @@ import {
   Assets,
   ColorMatrixFilter,
   Container,
+  Filter,
+  GlProgram,
   Graphics,
   PerspectiveMesh,
   RenderTexture,
   Text,
   TextStyle,
+  UniformGroup,
+  defaultFilterVert,
 } from "pixi.js";
 import "pixi.js/advanced-blend-modes";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { ColorAdjustments, Layer, LayerChanges } from "../types/project";
 import { DEFAULT_COLOR_ADJUSTMENTS } from "../types/project";
+
+// Crop + softness filter fragment shader (PixiJS v8 / GLSL 300 es)
+const CROP_FRAG = `
+in vec2 vTextureCoord;
+out vec4 finalColor;
+uniform sampler2D uTexture;
+uniform float uCl;
+uniform float uCr;
+uniform float uCt;
+uniform float uCb;
+uniform float uSoft;
+// PixiJS built-in: valid UV content bounds of the filter's input texture.
+// Normalising by this gives a proper [0,1] range even when the PerspectiveMesh
+// bounding-box is larger than the visible content (causing vTextureCoord to not
+// reach exactly 0 or 1 at the image edges).
+uniform vec4 uInputClamp;
+
+void main() {
+  vec4 c = texture(uTexture, vTextureCoord);
+
+  vec2 uvRange = max(uInputClamp.zw - uInputClamp.xy, vec2(0.001));
+  float x = (vTextureCoord.x - uInputClamp.x) / uvRange.x;
+  float y = (vTextureCoord.y - uInputClamp.y) / uvRange.y;
+
+  float a;
+  if (uSoft > 0.001) {
+    // Positive softness: feather outward at each crop edge
+    a = smoothstep(max(0.0, uCl - uSoft), uCl, x)
+      * smoothstep(max(0.0, uCr - uSoft), uCr, 1.0 - x)
+      * smoothstep(max(0.0, uCt - uSoft), uCt, y)
+      * smoothstep(max(0.0, uCb - uSoft), uCb, 1.0 - y);
+  } else if (uSoft < -0.001) {
+    // Negative softness: hard crop + vignette from all four image edges.
+    // s capped at 0.5 so each smoothstep reaches 1.0 at center (fully opaque there).
+    float s = -uSoft * 0.5;
+    float hardCrop = step(uCl, x) * step(uCr, 1.0 - x)
+                   * step(uCt, y) * step(uCb, 1.0 - y);
+    float vignette = smoothstep(0.0, s, x)
+                   * smoothstep(0.0, s, 1.0 - x)
+                   * smoothstep(0.0, s, y)
+                   * smoothstep(0.0, s, 1.0 - y);
+    a = hardCrop * vignette;
+  } else {
+    // Zero softness: hard crop only
+    a = step(uCl, x) * step(uCr, 1.0 - x)
+      * step(uCt, y) * step(uCb, 1.0 - y);
+  }
+
+  finalColor = vec4(c.rgb, c.a * a);
+}
+`;
 
 const HANDLE_RADIUS = 6;
 const ENDPOINT_RADIUS = 6;
@@ -256,6 +311,9 @@ interface LayerEntry {
   endpointHandles: Graphics[];
   hitLine?: Graphics;
   cacheKey: string;
+  cropMask?: Graphics;
+  cropFilter?: Filter;
+  cropUniforms?: UniformGroup;
 }
 
 export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function PixiCanvas({
@@ -678,6 +736,52 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
           entry.container.position.set(toPixX(layer.x, cw), toPixY(layer.y, ch));
           entry.container.rotation = layer.rotation;
           entry.container.skew.set(0, 0);
+
+          // Crop + softness — GPU filter applied to the mesh content
+          const cl   = layer.cropLeft     ?? 0;
+          const cr   = layer.cropRight    ?? 0;
+          const ct   = layer.cropTop      ?? 0;
+          const cb   = layer.cropBottom   ?? 0;
+          const soft = (layer.cropSoftness ?? 0) / 100; // −1 to 1 fraction
+          const hasCrop = cl > 0 || cr > 0 || ct > 0 || cb > 0 || soft !== 0;
+
+          if (hasCrop) {
+            if (!entry.cropFilter) {
+              const ug = new UniformGroup({
+                uCl:   { value: cl,   type: "f32" },
+                uCr:   { value: cr,   type: "f32" },
+                uCt:   { value: ct,   type: "f32" },
+                uCb:   { value: cb,   type: "f32" },
+                uSoft: { value: soft, type: "f32" },
+              });
+              const glProg = GlProgram.from({ vertex: defaultFilterVert, fragment: CROP_FRAG, name: "crop-filter" });
+              entry.cropFilter   = new Filter({ glProgram: glProg, resources: { cropUniforms: ug } });
+              entry.cropUniforms = ug;
+            } else {
+              // update uniforms in-place
+              const u = entry.cropUniforms!.uniforms;
+              u.uCl = cl; u.uCr = cr; u.uCt = ct; u.uCb = cb; u.uSoft = soft;
+            }
+            const existingFilters = (entry.content.filters as Filter[] | null) ?? [];
+            if (!existingFilters.includes(entry.cropFilter)) {
+              entry.content.filters = [...existingFilters.filter((f) => f !== entry.cropFilter), entry.cropFilter];
+            }
+          } else {
+            if (entry.cropFilter) {
+              entry.content.filters = ((entry.content.filters as Filter[] | null) ?? []).filter((f) => f !== entry.cropFilter);
+              entry.cropFilter.destroy();
+              delete entry.cropFilter;
+              delete entry.cropUniforms;
+            }
+          }
+
+          // Remove old stencil mask if present (migration from previous approach)
+          if (entry.cropMask) {
+            entry.container.mask = null;
+            entry.container.removeChild(entry.cropMask);
+            entry.cropMask.destroy();
+            delete entry.cropMask;
+          }
         } else if (layer.type === "fill") {
           entry.container.pivot.set(0, 0);
           entry.container.position.set(0, 0);
@@ -978,18 +1082,28 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
 
         const vpW = viewportRef.current?.clientWidth ?? 0;
         const vpH = viewportRef.current?.clientHeight ?? 0;
-        const nx = layer.type === "image" ? layer.x : (layer.x ?? 0);
-        const ny = layer.type === "image" ? layer.y : (layer.y ?? 0);
-        const nw = layer.type === "image" ? layer.width : (layer.width ?? 0);
-        const nh = layer.type === "image" ? layer.height : (layer.height ?? 0);
+        const nxBase = layer.type === "image" ? layer.x : (layer.x ?? 0);
+        const nyBase = layer.type === "image" ? layer.y : (layer.y ?? 0);
+        const nwBase = layer.type === "image" ? layer.width : (layer.width ?? 0);
+        const nhBase = layer.type === "image" ? layer.height : (layer.height ?? 0);
         const rot = layer.type === "image" ? layer.rotation : (layer.rotation ?? 0);
-
         const ax = layer.type === "image" ? (layer.anchorX ?? 0) : 0;
         const ay = layer.type === "image" ? (layer.anchorY ?? 0) : 0;
+
+        // Adjust bounds to reflect crop — bounding box tracks the visible region
+        const cl = layer.type === "image" ? (layer.cropLeft  ?? 0) : 0;
+        const cr = layer.type === "image" ? (layer.cropRight ?? 0) : 0;
+        const ct = layer.type === "image" ? (layer.cropTop   ?? 0) : 0;
+        const cb = layer.type === "image" ? (layer.cropBottom ?? 0) : 0;
+        const nw = nwBase * (1 - cl - cr);
+        const nh = nhBase * (1 - ct - cb);
+        const nx = nxBase + (cl - cr) / 2 * nwBase;
+        const ny = nyBase + (ct - cb) / 2 * nhBase;
+
         const w = nw * canvasWidth * zoom;
         const h = nh * canvasHeight * zoom;
-        const cx = vpW / 2 + pan.x + (nx - nw * ax) * canvasWidth * zoom;
-        const cy = vpH / 2 + pan.y + (ny - nh * ay) * canvasHeight * zoom;
+        const cx = vpW / 2 + pan.x + (nx - nwBase * ax) * canvasWidth * zoom;
+        const cy = vpH / 2 + pan.y + (ny - nhBase * ay) * canvasHeight * zoom;
         const HR = Math.max(4, Math.min(HANDLE_RADIUS, Math.min(w, h) * 0.05));
         const showHandles = layer.id === selectedId;
         const layerId = layer.id;

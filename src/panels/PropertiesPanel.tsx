@@ -407,7 +407,8 @@ function TNum({
   const clamp = (v: number) => Math.min(max, Math.max(min, v));
   // sensitivity: cover the full range in ~400px of drag, but at least 1 step/px
   const speed = Math.max(step, (max - min) / 400);
-  const display = parseFloat(value.toFixed(4)).toString();
+  const clamped = clamp(value);
+  const display = parseFloat(clamped.toFixed(4)).toString();
 
   const startEdit = () => {
     setDraft(display);
@@ -428,6 +429,8 @@ function TNum({
         type="number"
         className="trow-num"
         value={draft}
+        min={min}
+        max={max}
         step={step}
         autoFocus
         onChange={(e) => setDraft(e.target.value)}
@@ -447,7 +450,7 @@ function TNum({
         if (e.button !== 0) return;
         e.preventDefault();
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-        drag.current = { startX: e.clientX, startVal: value, moved: false };
+        drag.current = { startX: e.clientX, startVal: clamped, moved: false };
       }}
       onPointerMove={(e) => {
         if (!drag.current) return;

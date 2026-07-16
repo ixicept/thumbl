@@ -5,8 +5,8 @@ import {
   ColorMatrixFilter,
   Container,
   Graphics,
+  PerspectiveMesh,
   RenderTexture,
-  Sprite,
   Text,
   TextStyle,
 } from "pixi.js";
@@ -248,7 +248,7 @@ interface PixiCanvasProps {
 
 interface LayerEntry {
   container: Container;
-  content: Sprite | Graphics | Text;
+  content: PerspectiveMesh | Graphics | Text;
   outline: Graphics;
   handles: Map<HandleType, Graphics>;
   anchorHandle?: Graphics;
@@ -558,13 +558,12 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
             entries.delete(layer.id);
           }
 
-          let content: Sprite | Graphics | Text;
+          let content: PerspectiveMesh | Graphics | Text;
           if (layer.type === "image") {
             const texture = await Assets.load(convertFileSrc(layer.src));
             if (cancelled) return;
-            const sprite = new Sprite(texture);
-            sprite.anchor.set(0, 0);
-            content = sprite;
+            const mesh = new PerspectiveMesh({ texture, verticesX: 32, verticesY: 32 });
+            content = mesh;
           } else if (layer.type === "text") {
             content = new Text({ text: layer.text, style: new TextStyle({}) });
           } else {
@@ -649,20 +648,36 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
         if (layer.type === "image") {
           const pw = toPixW(layer.width, cw);
           const ph = toPixH(layer.height, ch);
-          const sprite = entry.content as Sprite;
-          sprite.width = pw;
-          sprite.height = ph;
-          // Apply flip by negating scale and offsetting position within the container
-          sprite.scale.x = layer.flipX ? -Math.abs(sprite.scale.x) : Math.abs(sprite.scale.x);
-          sprite.scale.y = layer.flipY ? -Math.abs(sprite.scale.y) : Math.abs(sprite.scale.y);
-          sprite.x = layer.flipX ? pw : 0;
-          sprite.y = layer.flipY ? ph : 0;
+          const pm = entry.content as PerspectiveMesh;
+          const pitch = layer.pitch ?? 0;
+          const yaw   = layer.yaw   ?? 0;
+          const flipX = layer.flipX ?? false;
+          const flipY = layer.flipY ?? false;
+          const D = 2.0; // perspective distance — higher = subtler effect
+          const proj = (u: number, v: number): [number, number] => {
+            const fu = flipX ? -u : u;
+            const fv = flipY ? -v : v;
+            const sinP = Math.sin(pitch), cosP = Math.cos(pitch);
+            const dP = 1 - fv * sinP / D;
+            const pu = Math.abs(dP) > 0.01 ? fu / dP : fu;
+            const pv = Math.abs(dP) > 0.01 ? fv * cosP / dP : fv * cosP;
+            const sinY = Math.sin(yaw), cosY = Math.cos(yaw);
+            const dY = 1 - pu * sinY / D;
+            const ru = Math.abs(dY) > 0.01 ? pu * cosY / dY : pu * cosY;
+            const rv = Math.abs(dY) > 0.01 ? pv / dY : pv;
+            return [(ru + 0.5) * pw, (rv + 0.5) * ph];
+          };
+          const [TLx, TLy] = proj(-0.5, -0.5);
+          const [TRx, TRy] = proj( 0.5, -0.5);
+          const [BRx, BRy] = proj( 0.5,  0.5);
+          const [BLx, BLy] = proj(-0.5,  0.5);
+          pm.setCorners(TLx, TLy, TRx, TRy, BRx, BRy, BLx, BLy);
           const ax = layer.anchorX ?? 0;
           const ay = layer.anchorY ?? 0;
           entry.container.pivot.set(pw * (0.5 + ax), ph * (0.5 + ay));
           entry.container.position.set(toPixX(layer.x, cw), toPixY(layer.y, ch));
           entry.container.rotation = layer.rotation;
-          entry.container.skew.set(layer.yaw ?? 0, layer.pitch ?? 0);
+          entry.container.skew.set(0, 0);
         } else if (layer.type === "fill") {
           entry.container.pivot.set(0, 0);
           entry.container.position.set(0, 0);

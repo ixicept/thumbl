@@ -399,16 +399,72 @@ function TNum({
   step?: number;
   onChange: (v: number) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const drag = useRef<{ startX: number; startVal: number; moved: boolean } | null>(null);
+
+  const clamp = (v: number) => Math.min(max, Math.max(min, v));
+  // sensitivity: cover the full range in ~400px of drag, but at least 1 step/px
+  const speed = Math.max(step, (max - min) / 400);
+  const display = parseFloat(value.toFixed(4)).toString();
+
+  const startEdit = () => {
+    setDraft(display);
+    setEditing(true);
+    requestAnimationFrame(() => { inputRef.current?.select(); });
+  };
+
+  const commitEdit = () => {
+    const v = parseFloat(draft);
+    if (!isNaN(v)) onChange(clamp(v));
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="number"
+        className="trow-num"
+        value={draft}
+        step={step}
+        autoFocus
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commitEdit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setEditing(false);
+        }}
+      />
+    );
+  }
+
   return (
-    <input
-      type="number"
-      className="trow-num"
-      value={value}
-      min={min}
-      max={max}
-      step={step}
-      onChange={(e) => onChange(num(e.target.value))}
-    />
+    <div
+      className="trow-num trow-num-scrub"
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        drag.current = { startX: e.clientX, startVal: value, moved: false };
+      }}
+      onPointerMove={(e) => {
+        if (!drag.current) return;
+        const dx = e.clientX - drag.current.startX;
+        if (Math.abs(dx) > 3) drag.current.moved = true;
+        if (drag.current.moved) {
+          onChange(clamp(parseFloat((drag.current.startVal + dx * speed).toFixed(10))));
+        }
+      }}
+      onPointerUp={() => {
+        const d = drag.current;
+        drag.current = null;
+        if (d && !d.moved) startEdit();
+      }}
+    >
+      {display}
+    </div>
   );
 }
 

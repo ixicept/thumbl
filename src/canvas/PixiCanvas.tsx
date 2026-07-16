@@ -994,8 +994,6 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
 
             if (snap.type === "image") {
               // Anchor-based resize: anchor world position (snap.x, snap.y) stays fixed.
-              // Each handle moves one edge; the anchor determines how far that edge is from
-              // the pivot, so the scale factor depends on (0.5 ± anchorOffset).
               const startW = snap.width;
               const startH = snap.height;
               const iax = snap.anchorX ?? 0;
@@ -1008,7 +1006,6 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
                 const dx = (ev.clientX - startX) / (cw * z);
                 const dy = (ev.clientY - startY) / (ch * z);
 
-                // Width: left handle shrinks (dx>0 = moving right), right expands
                 let newW = startW;
                 if (type === "l" || type === "tl" || type === "bl") {
                   const f = 0.5 + iax;
@@ -1018,7 +1015,6 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
                   if (f > 0.001) newW = Math.max(0.01, startW + dx / f);
                 }
 
-                // Height: top handle shrinks (dy>0 = moving down), bottom expands
                 let newH = startH;
                 if (type === "t" || type === "tl" || type === "tr") {
                   const f = 0.5 + iay;
@@ -1028,12 +1024,10 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
                   if (f > 0.001) newH = Math.max(0.01, startH + dy / f);
                 }
 
-                if (aspectLockedRef.current && startW > 0 && startH > 0) {
-                  if (type === "t" || type === "b") {
-                    newW = Math.max(0.01, newH * AR);
-                  } else {
-                    newH = Math.max(0.01, newW / AR);
-                  }
+                // aspect lock only applies to corner handles; middle handles always move one axis
+                const isCorner = type === "tl" || type === "tr" || type === "bl" || type === "br";
+                if (aspectLockedRef.current && isCorner && startW > 0 && startH > 0) {
+                  newH = Math.max(0.01, newW / AR);
                 }
 
                 onLayerChangeRef.current(layerId, { x: pivotX, y: pivotY, width: newW, height: newH });

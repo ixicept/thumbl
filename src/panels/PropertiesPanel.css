@@ -418,6 +418,30 @@
   background-color: #1e2530;
 }
 
+.trow-num::-webkit-inner-spin-button,
+.trow-num::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.trow-num[type="number"] {
+  -moz-appearance: textfield;
+}
+
+.trow-num-scrub {
+  cursor: ew-resize;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  user-select: none;
+  touch-action: none;
+}
+
+.trow-num-scrub:hover {
+  border-color: #555;
+  background-color: #222;
+}
+
 .trow-slider {
   -webkit-appearance: none;
   appearance: none;

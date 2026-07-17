@@ -926,6 +926,9 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
       const app = appRef.current;
       if (!app) throw new Error("Canvas not ready");
 
+      const cw = cwRef.current;
+      const ch = chRef.current;
+
       // hide all selection UI before capturing
       const hidden: Graphics[] = [];
       for (const entry of entriesRef.current.values()) {
@@ -942,11 +945,21 @@ export const PixiCanvas = forwardRef<PixiCanvasHandle, PixiCanvasProps>(function
         }
       }
 
-      // render a clean frame then extract
-      app.renderer.render(app.stage);
-      const c2d = app.renderer.extract.canvas(app.stage) as HTMLCanvasElement;
+      // Render into a RenderTexture at the exact canvas dimensions (resolution: 1
+      // avoids devicePixelRatio scaling so the output is always cw × ch pixels).
+      const rt = RenderTexture.create({ width: cw, height: ch, resolution: 1 });
+      app.renderer.render({ container: app.stage, target: rt });
+      const extracted = app.renderer.extract.canvas(rt) as HTMLCanvasElement;
+      rt.destroy(true);
+
+      // Draw into a plain canvas to guarantee exact pixel dimensions.
+      const out = document.createElement("canvas");
+      out.width = cw;
+      out.height = ch;
+      out.getContext("2d")!.drawImage(extracted, 0, 0, cw, ch);
+
       const mimeType = format === "jpeg" ? "image/jpeg" : "image/png";
-      const dataUrl = c2d.toDataURL(mimeType, quality);
+      const dataUrl = out.toDataURL(mimeType, quality);
 
       // restore UI
       for (const n of hidden) n.visible = true;

@@ -1,6 +1,133 @@
 use font_kit::properties::Style;
 use font_kit::source::SystemSource;
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+
+struct AppState {
+    share_server: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+
+#[derive(serde::Serialize)]
+struct ShareResult {
+    url: String,
+    qr_svg: String,
+}
+
+async fn run_share_server(
+    listener: tokio::net::TcpListener,
+    image_data: Arc<Vec<u8>>,
+    content_type: String,
+    ext: String,
+    mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+) {
+    loop {
+        tokio::select! {
+            _ = &mut shutdown_rx => break,
+            res = listener.accept() => {
+                match res {
+                    Ok((mut stream, _)) => {
+                        let data = Arc::clone(&image_data);
+                        let ct = content_type.clone();
+                        let e = ext.clone();
+                        tokio::spawn(async move {
+                            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                            let mut buf = [0u8; 1024];
+                            let _ = stream.read(&mut buf).await;
+                            let header = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nContent-Disposition: inline; filename=\"thumbnail.{}\"\r\nConnection: close\r\n\r\n",
+                                ct, data.len(), e
+                            );
+                            let _ = stream.write_all(header.as_bytes()).await;
+                            let _ = stream.write_all(&data).await;
+                        });
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+}
+
+#[tauri::command]
+async fn start_share_server(
+    app_state: tauri::State<'_, AppState>,
+    image_b64: String,
+    format: String,
+) -> Result<ShareResult, String> {
+    use base64::Engine;
+    use tokio::net::TcpListener;
+
+    // Stop any existing server
+    {
+        let mut guard = app_state.share_server.lock().unwrap();
+        if let Some(tx) = guard.take() {
+            let _ = tx.send(());
+        }
+    }
+
+    // Decode base64 data URL
+    let b64 = image_b64.splitn(2, ',').nth(1).ok_or("Invalid data URL")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| e.to_string())?;
+
+    let content_type = if format == "jpeg" { "image/jpeg" } else { "image/png" };
+    let ext = if format == "jpeg" { "jpg" } else { "png" };
+    let image_data = Arc::new(bytes);
+
+    // Bind to a random free port
+    let listener = TcpListener::bind("0.0.0.0:0")
+        .await
+        .map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+
+    // Find local IP by connecting a UDP socket (no data sent)
+    let local_ip = {
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
+        socket.connect("8.8.8.8:80").map_err(|e| e.to_string())?;
+        socket.local_addr().map_err(|e| e.to_string())?.ip()
+    };
+
+    let url = format!("http://{}:{}/thumbnail.{}", local_ip, port, ext);
+
+    // Generate QR code SVG
+    let qr_svg = {
+        use qrcode::render::svg;
+        use qrcode::{EcLevel, QrCode};
+        let code = QrCode::with_error_correction_level(url.as_bytes(), EcLevel::Q)
+            .map_err(|e| e.to_string())?;
+        code.render::<svg::Color<'_>>()
+            .min_dimensions(250, 250)
+            .dark_color(svg::Color("#000000"))
+            .light_color(svg::Color("#ffffff"))
+            .build()
+    };
+
+    // Spawn HTTP server task
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(run_share_server(
+        listener,
+        Arc::clone(&image_data),
+        content_type.to_string(),
+        ext.to_string(),
+        rx,
+    ));
+
+    {
+        let mut guard = app_state.share_server.lock().unwrap();
+        *guard = Some(tx);
+    }
+
+    Ok(ShareResult { url, qr_svg })
+}
+
+#[tauri::command]
+fn stop_share_server(app_state: tauri::State<'_, AppState>) {
+    let mut guard = app_state.share_server.lock().unwrap();
+    if let Some(tx) = guard.take() {
+        let _ = tx.send(());
+    }
+}
 
 #[derive(serde::Serialize)]
 struct ImageResult {
@@ -437,6 +564,9 @@ fn run_u2net(model_path: &str, src_path: &str) -> Result<Vec<u8>, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(AppState {
+            share_server: Mutex::new(None),
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -451,6 +581,8 @@ pub fn run() {
             get_bg_model_status,
             download_bg_model,
             remove_background_local,
+            start_share_server,
+            stop_share_server,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { Assets } from "pixi.js";
+import { pickImagePath } from "../project/io";
 import type {
   ColorAdjustments,
   ImageLayer,
@@ -89,7 +92,7 @@ export function PropertiesPanel({
 
       <div className="prop-tab-body">
         {tab === "Image" && layer.type === "image" && (
-          <ImageToolsProps layer={layer} set={set!} />
+          <ImageToolsProps layer={layer} set={set!} canvasWidth={canvasWidth} canvasHeight={canvasHeight} />
         )}
         {tab === "Text" && layer.type === "text" && (
           <TextProps layer={layer} fonts={fonts} set={set!} />
@@ -720,15 +723,30 @@ type ApiPhase = "idle" | "processing" | "error";
 function ImageToolsProps({
   layer,
   set,
+  canvasWidth,
+  canvasHeight,
 }: {
   layer: ImageLayer;
   set: (c: LayerChanges) => void;
+  canvasWidth: number;
+  canvasHeight: number;
 }) {
   const [localPhase, setLocalPhase] = useState<LocalPhase>("checking");
   const [localErr, setLocalErr] = useState("");
   const [apiPhase, setApiPhase] = useState<ApiPhase>("idle");
   const [apiErr, setApiErr] = useState("");
   const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE) ?? "");
+
+  async function handleReplace() {
+    const path = await pickImagePath();
+    if (!path) return;
+    const texture = await Assets.load(convertFileSrc(path));
+    // Keep height fixed; adjust width to match the new image's aspect ratio.
+    const newAspect = texture.width / texture.height;
+    const currentHeightPx = layer.height * canvasHeight;
+    const newWidth = (currentHeightPx * newAspect) / canvasWidth;
+    set({ src: path, width: newWidth });
+  }
 
   useEffect(() => {
     invoke<boolean>("get_bg_model_status")
@@ -786,6 +804,11 @@ function ImageToolsProps({
 
   return (
     <>
+      <Section title="Replace">
+        <button className="prop-action-btn" onClick={() => void handleReplace()}>
+          Replace Image
+        </button>
+      </Section>
       <Section title="Local AI (Free)">
         <div className="prop-bg-remove">
           {localPhase === "checking" && (

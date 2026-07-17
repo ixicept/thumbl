@@ -1,0 +1,27 @@
+.quick-share-dialog {
+  width: 300px;
+  text-align: center;
+}
+
+.share-subtitle {
+  font-size: 0.8em;
+  color: #999;
+  margin: -0.5em 0 1em;
+}
+
+.qr-image {
+  width: 220px;
+  height: 220px;
+  display: block;
+  margin: 0 auto 0.75em;
+  border-radius: 6px;
+  image-rendering: pixelated;
+}
+
+.share-url {
+  font-size: 0.72em;
+  color: #888;
+  word-break: break-all;
+  margin: 0 0 1em;
+  user-select: all;
+}

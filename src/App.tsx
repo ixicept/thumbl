@@ -18,6 +18,7 @@ import { ExportDialog } from "./dialogs/ExportDialog";
 import { EmojiPicker } from "./dialogs/EmojiPicker";
 import { ShortcutsDialog } from "./dialogs/ShortcutsDialog";
 import { UnsavedChangesDialog } from "./dialogs/UnsavedChangesDialog";
+import { QuickShareDialog } from "./dialogs/QuickShareDialog";
 import { loadFonts, type FontFamily } from "./fonts";
 import {
   openProject,
@@ -65,6 +66,7 @@ function App() {
   const [activeLeftTab, setActiveLeftTab] = useState<"layers" | "effects">("layers");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const [quickShare, setQuickShare] = useState<{ url: string; qrSvg: string } | null>(null);
   const isDirtyRef = useRef(isDirty);
   const handleSaveRef = useRef<() => Promise<void>>(async () => {});
   const pendingActionRef = useRef<(() => void) | null>(null);
@@ -436,6 +438,20 @@ const dragToolRef = useRef<string | null>(null);
     }
   }
 
+  async function handleQuickShare() {
+    if (!canvasRef.current || !project) return;
+    const dataUrl = await canvasRef.current.exportImage("png", 0.92);
+    try {
+      const result = await invoke<{ url: string; qr_svg: string }>("start_share_server", {
+        imageB64: dataUrl,
+        format: "png",
+      });
+      setQuickShare({ url: result.url, qrSvg: result.qr_svg });
+    } catch (e) {
+      console.error("Quick share failed:", e);
+    }
+  }
+
   async function handleExport(format: "png" | "jpeg", quality: number) {
     setShowExportDialog(false);
     if (!canvasRef.current) return;
@@ -751,6 +767,11 @@ const dragToolRef = useRef<string | null>(null);
                 onClick: () => setShowExportDialog(true),
                 disabled: !project,
               },
+              {
+                label: "Quick Share...",
+                onClick: () => void handleQuickShare(),
+                disabled: !project,
+              },
               { label: "Exit", onClick: () => void getCurrentWindow().close() },
             ],
           },
@@ -946,6 +967,16 @@ const dragToolRef = useRef<string | null>(null);
       )}
       {showShortcuts && (
         <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
+      )}
+      {quickShare && (
+        <QuickShareDialog
+          url={quickShare.url}
+          qrSvg={quickShare.qrSvg}
+          onClose={() => {
+            setQuickShare(null);
+            void invoke("stop_share_server");
+          }}
+        />
       )}
       {showUnsavedDialog && (
         <UnsavedChangesDialog

@@ -13,11 +13,160 @@ struct ShareResult {
     qr_svg: String,
 }
 
+const SHARE_HTML: &str = r#"<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Thumbl Share</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#1a1a1a;color:#f0f0f0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;flex-direction:column;align-items:center;gap:16px;padding:24px 16px;min-height:100vh}
+    h1{font-size:18px;font-weight:600}
+    .card{background:#2a2a2a;border-radius:12px;padding:16px;width:100%;max-width:420px}
+    .label{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
+    .thumb{width:100%;border-radius:8px;display:block}
+    .btn{display:block;text-align:center;background:#4f9eff;color:#0a1929;padding:14px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:700;margin-top:10px;cursor:pointer;border:none;width:100%}
+    .btn:active{opacity:.8}
+    input[type=file]{display:none}
+    .status{font-size:13px;color:#888;text-align:center;margin-top:8px;min-height:18px}
+    .ok{color:#4f9eff}
+  </style>
+</head>
+<body>
+  <h1>Thumbl Share</h1>
+  <div class="card">
+    <div class="label">From laptop — tap to save</div>
+    <img class="thumb" src="/thumbnail.XEXT" alt="Canvas export">
+    <a class="btn" href="/thumbnail.XEXT" download="thumbnail.XEXT">Save to Device</a>
+  </div>
+  <div class="card">
+    <div class="label">Send to laptop</div>
+    <label class="btn" for="file-input">Choose Photo</label>
+    <input type="file" id="file-input" accept="image/*">
+    <div class="status" id="status"></div>
+  </div>
+  <script>
+    document.getElementById('file-input').addEventListener('change',async function(){
+      const file=this.files[0];if(!file)return;
+      const s=document.getElementById('status');
+      s.className='status';s.textContent='Uploading…';
+      try{
+        const r=await fetch('/upload',{method:'POST',headers:{'Content-Type':file.type,'X-Filename':file.name},body:file});
+        if(r.ok){s.className='status ok';s.textContent='Sent to laptop!';}
+        else{s.textContent='Upload failed ('+r.status+')';}
+      }catch(e){s.textContent='Error: '+e.message;}
+    });
+  </script>
+</body>
+</html>"#;
+
+async fn handle_connection(
+    mut stream: tokio::net::TcpStream,
+    image_data: Arc<Vec<u8>>,
+    ext: String,
+    app_handle: tauri::AppHandle,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tauri::Emitter;
+
+    let mut head_buf = vec![0u8; 8192];
+    let n = match stream.read(&mut head_buf).await {
+        Ok(n) if n > 0 => n,
+        _ => return,
+    };
+
+    let head_bytes = &head_buf[..n];
+    let head_str = String::from_utf8_lossy(head_bytes);
+    let first_line = head_str.lines().next().unwrap_or("");
+    let mut parts = first_line.split_whitespace();
+    let method = parts.next().unwrap_or("GET");
+    let path = parts.next().unwrap_or("/");
+
+    match (method, path) {
+        ("GET", p) if p == "/" || p == "/index.html" => {
+            let html = SHARE_HTML.replace("XEXT", &ext);
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                html.len(), html
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+        ("GET", p) if p.starts_with("/thumbnail") => {
+            let ct = if ext == "jpg" { "image/jpeg" } else { "image/png" };
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nContent-Disposition: inline; filename=\"thumbnail.{}\"\r\nConnection: close\r\n\r\n",
+                ct, image_data.len(), ext
+            );
+            let _ = stream.write_all(header.as_bytes()).await;
+            let _ = stream.write_all(&image_data).await;
+        }
+        ("POST", "/upload") => {
+            let content_length: usize = head_str.lines()
+                .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+                .and_then(|l| l.splitn(2, ':').nth(1))
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(0);
+
+            let upload_ct = head_str.lines()
+                .find(|l| l.to_ascii_lowercase().starts_with("content-type:"))
+                .and_then(|l| l.splitn(2, ':').nth(1))
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+
+            let upload_ext = if upload_ct.contains("jpeg") || upload_ct.contains("jpg") { "jpg" }
+                else if upload_ct.contains("png") { "png" }
+                else if upload_ct.contains("webp") { "webp" }
+                else { "jpg" };
+
+            let header_end = head_bytes.windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|i| i + 4)
+                .unwrap_or(n);
+
+            let already_read = &head_bytes[header_end..];
+            let remaining = content_length.saturating_sub(already_read.len());
+
+            const MAX_UPLOAD: usize = 50 * 1024 * 1024;
+            if content_length > MAX_UPLOAD {
+                let _ = stream.write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                return;
+            }
+
+            let mut body = already_read.to_vec();
+            if remaining > 0 {
+                let mut rest = vec![0u8; remaining];
+                if stream.read_exact(&mut rest).await.is_err() {
+                    let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                    return;
+                }
+                body.extend_from_slice(&rest);
+            }
+
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
+            let temp_path = std::env::temp_dir()
+                .join(format!("thumbl_share_{}.{}", ts, upload_ext));
+
+            if std::fs::write(&temp_path, &body).is_ok() {
+                let _ = app_handle.emit("share-received", temp_path.to_string_lossy().to_string());
+            }
+
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK").await;
+        }
+        _ => {
+            let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+        }
+    }
+}
+
 async fn run_share_server(
     listener: tokio::net::TcpListener,
     image_data: Arc<Vec<u8>>,
-    content_type: String,
     ext: String,
+    app_handle: tauri::AppHandle,
     mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
     loop {
@@ -25,21 +174,11 @@ async fn run_share_server(
             _ = &mut shutdown_rx => break,
             res = listener.accept() => {
                 match res {
-                    Ok((mut stream, _)) => {
+                    Ok((stream, _)) => {
                         let data = Arc::clone(&image_data);
-                        let ct = content_type.clone();
                         let e = ext.clone();
-                        tokio::spawn(async move {
-                            use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                            let mut buf = [0u8; 1024];
-                            let _ = stream.read(&mut buf).await;
-                            let header = format!(
-                                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nContent-Disposition: inline; filename=\"thumbnail.{}\"\r\nConnection: close\r\n\r\n",
-                                ct, data.len(), e
-                            );
-                            let _ = stream.write_all(header.as_bytes()).await;
-                            let _ = stream.write_all(&data).await;
-                        });
+                        let ah = app_handle.clone();
+                        tokio::spawn(handle_connection(stream, data, e, ah));
                     }
                     Err(_) => break,
                 }
@@ -50,6 +189,7 @@ async fn run_share_server(
 
 #[tauri::command]
 async fn start_share_server(
+    app: tauri::AppHandle,
     app_state: tauri::State<'_, AppState>,
     image_b64: String,
     format: String,
@@ -71,7 +211,6 @@ async fn start_share_server(
         .decode(b64)
         .map_err(|e| e.to_string())?;
 
-    let content_type = if format == "jpeg" { "image/jpeg" } else { "image/png" };
     let ext = if format == "jpeg" { "jpg" } else { "png" };
     let image_data = Arc::new(bytes);
 
@@ -88,7 +227,8 @@ async fn start_share_server(
         socket.local_addr().map_err(|e| e.to_string())?.ip()
     };
 
-    let url = format!("http://{}:{}/thumbnail.{}", local_ip, port, ext);
+    // QR code points to the share page (root)
+    let url = format!("http://{}:{}/", local_ip, port);
 
     // Generate QR code SVG
     let qr_svg = {
@@ -108,8 +248,8 @@ async fn start_share_server(
     tokio::spawn(run_share_server(
         listener,
         Arc::clone(&image_data),
-        content_type.to_string(),
         ext.to_string(),
+        app.clone(),
         rx,
     ));
 

@@ -5,6 +5,7 @@ import { Assets } from "pixi.js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { listen } from "@tauri-apps/api/event";
 import { PixiCanvas, type PixiCanvasHandle } from "./canvas/PixiCanvas";
 import { LayersPanel } from "./panels/LayersPanel";
 import { PropertiesPanel } from "./panels/PropertiesPanel";
@@ -147,6 +148,13 @@ const dragToolRef = useRef<string | null>(null);
     });
 
     return () => { void unlistenPromise.then((fn) => fn()); };
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen<string>("share-received", (event) => {
+      void addImageFromPathRef.current(event.payload);
+    });
+    return () => { void unlisten.then((fn) => fn()); };
   }, []);
 
   function handleCloseRequest() {
@@ -768,7 +776,7 @@ const dragToolRef = useRef<string | null>(null);
                 disabled: !project,
               },
               {
-                label: "Quick Share...",
+                label: "Share to Device...",
                 onClick: () => void handleQuickShare(),
                 disabled: !project,
               },

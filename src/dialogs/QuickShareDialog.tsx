@@ -13,8 +13,8 @@ export function QuickShareDialog({ url, qrSvg, onClose }: QuickShareDialogProps)
   return (
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog quick-share-dialog" onClick={(e) => e.stopPropagation()}>
-        <h2>Quick Share</h2>
-        <p className="share-subtitle">Scan on your phone (same Wi-Fi network)</p>
+        <h2>Share to Device</h2>
+        <p className="share-subtitle">Scan to send or receive images (same Wi-Fi)</p>
         <img src={qrImgSrc} alt="QR code" className="qr-image" />
         <p className="share-url">{url}</p>
         <div className="dialog-actions">
